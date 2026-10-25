@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub(super) struct Workflow {
-    pub(super) id: i32,
-    pub(super) active: bool,
-    pub(super) definition_json: String,
-    pub(super) description: Option<String>,
-    pub(super) name: String,
-    pub(super) version: i32,
-    pub(super) created_at: String,
-    pub(super) last_updated: String,
+pub(crate) struct Workflow {
+    pub(crate) id: i32,
+    pub(crate) active: bool,
+    pub(crate) definition_json: String,
+    pub(crate) description: Option<String>,
+    pub(crate) name: String,
+    pub(crate) version: i32,
+    pub(crate) created_at: String,
+    pub(crate) last_updated: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -21,14 +22,34 @@ pub(super) struct WorkflowPayload {
     pub(super) version: i32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ExecutionResult {
+    pub(crate) success: bool,
+    pub(crate) execution_id: String,
+    pub(crate) output: Option<Value>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub(super) struct ExecutionRecord {
+    pub(super) id: i32,
+    pub(super) execution_id: String,
+    pub(super) workflow_id: Option<i32>,
+    pub(super) workflow_name: String,
+    pub(super) status: String,
+    pub(super) started_at: String,
+    pub(super) duration_ms: Option<i64>,
+    pub(super) input_json: String,
+    pub(super) output_json: Option<String>,
+    pub(super) error: Option<String>,
+}
+
 pub(super) const DEFAULT_OWS: &str = r#"{
   "document": {
     "dsl": "1.0.3",
     "namespace": "default",
-    "name": "hello",
+    "name": "new-workflow",
     "version": "1.0.0"
   },
-  "do": [
-    { "greet": { "set": { "message": "hello" } } }
-  ]
+  "do": []
 }"#;

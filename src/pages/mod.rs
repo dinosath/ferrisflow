@@ -1,6 +1,6 @@
-mod api;
+pub(crate) mod api;
 mod data_tables;
-mod models;
+pub(crate) mod models;
 mod overview;
 mod ows_editor;
 mod shared;

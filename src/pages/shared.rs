@@ -11,8 +11,7 @@ pub(crate) fn Shell(
     #[props(default)] on_document_action: Option<EventHandler<String>>,
     #[props(default)] breadcrumb_back: Option<Element>,
     #[props(default)] breadcrumb_save: Option<Element>,
-    #[props(default)] on_breadcrumb_rename: Option<EventHandler<String>>,
-    children: Element,
+    #[props(default)] on_breadcrumb_rename: Option<EventHandler<String>>, children: Element,
 ) -> Element {
     let mut tenant = use_context::<Signal<String>>();
     let mut tenant_menu = use_signal(|| false);

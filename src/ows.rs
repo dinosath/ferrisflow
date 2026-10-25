@@ -22,20 +22,22 @@ pub fn parse_ows_document(raw: &str) -> Result<WorkflowDefinition, String> {
         .cloned()
         .unwrap_or(value);
 
-    let definition: WorkflowDefinition = serde_json::from_value(definition_value)
+    let definition_json = serde_json::to_string(&definition_value)
+        .map_err(|error| format!("could not read OWS definition: {error}"))?;
+    let definition = ows_runtime_dsl::from_json(&definition_json)
         .map_err(|error| format!("definition is not valid OWS: {error}"))?;
 
-    if definition.document.dsl.trim().is_empty() {
-        return Err("OWS document.dsl is required".to_string());
-    }
-    if definition.document.name.trim().is_empty() {
-        return Err("OWS document.name is required".to_string());
-    }
-    if definition.document.version.trim().is_empty() {
-        return Err("OWS document.version is required".to_string());
-    }
-    if definition.do_.entries.is_empty() {
-        return Err("OWS document must contain at least one task in do".to_string());
+    let report = ows_runtime_dsl::validate(&definition);
+    if !report.is_valid() {
+        return Err(report
+            .issues
+            .into_iter()
+            .map(|issue| match issue.instance {
+                Some(path) => format!("{path}: {}", issue.message),
+                None => issue.message,
+            })
+            .collect::<Vec<_>>()
+            .join("; "));
     }
 
     Ok(definition)

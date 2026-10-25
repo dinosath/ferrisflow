@@ -1,4 +1,7 @@
 use crate::app_state::AppState;
+use crate::models::execution::{
+    ActiveModel as ExecutionActiveModel, Entity as ExecutionEntity, Model as ExecutionModel,
+};
 use crate::models::workflow::{
     Column, Entity, Model, WorkflowCreate, WorkflowResponse, WorkflowUpdate,
 };
@@ -9,11 +12,12 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
+use ows_runtime::Runtime;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 use validator::Validate;
 /// Maximum number of items per page (hard cap).
@@ -185,6 +189,91 @@ pub struct ValidateRequest {
     pub definition_json: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecuteRequest {
+    pub definition_json: String,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub workflow_id: Option<i32>,
+    #[serde(default)]
+    pub workflow_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunSavedWorkflowRequest {
+    pub workflow_id: i32,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionResponse {
+    pub id: i32,
+    pub execution_id: String,
+    pub workflow_id: Option<i32>,
+    pub workflow_name: String,
+    pub status: String,
+    pub started_at: chrono::NaiveDateTime,
+    pub finished_at: Option<chrono::NaiveDateTime>,
+    pub duration_ms: Option<i64>,
+    pub input_json: String,
+    pub output_json: Option<String>,
+    pub error: Option<String>,
+}
+
+impl From<ExecutionModel> for ExecutionResponse {
+    fn from(model: ExecutionModel) -> Self {
+        Self {
+            id: model.id,
+            execution_id: model.id.to_string(),
+            workflow_id: model.workflow_id,
+            workflow_name: model.workflow_name,
+            status: model.status,
+            started_at: model.started_at,
+            finished_at: model.finished_at,
+            duration_ms: model.duration_ms,
+            input_json: model.input_json,
+            output_json: model.output_json,
+            error: model.error,
+        }
+    }
+}
+
+pub async fn list_executions(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let models = ExecutionEntity::find()
+        .order_by_desc(crate::models::execution::Column::StartedAt)
+        .limit(500)
+        .all(&state.db)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": error.to_string()})),
+            )
+        })?;
+    let items: Vec<ExecutionResponse> = models.into_iter().map(Into::into).collect();
+    Ok(Json(items))
+}
+
+pub async fn execute_saved_workflow(
+    State(state): State<AppState>, Json(request): Json<RunSavedWorkflowRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let workflow = load_item(&state.db, request.workflow_id).await?;
+    run_ows(
+        &state,
+        ExecuteRequest {
+            definition_json: workflow.definition_json,
+            input: request.input,
+            workflow_id: Some(workflow.id),
+            workflow_name: Some(workflow.name),
+        },
+    )
+    .await
+}
+
 /// Validate an OWS document without persisting it. This powers the editor's
 /// validate action and gives API clients a stable validation contract.
 pub async fn validate_ows(
@@ -202,6 +291,147 @@ pub async fn validate_ows(
     }
 }
 
+/// Executes an OWS workflow definition with the Open Workflow runtime.
+pub async fn execute_ows(
+    State(state): State<AppState>, Json(request): Json<ExecuteRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    run_ows(&state, request).await
+}
+
+async fn run_ows(
+    state: &AppState, request: ExecuteRequest,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let input = request.input.unwrap_or_else(|| serde_json::json!({}));
+    let workflow_name = request
+        .workflow_name
+        .clone()
+        .or_else(|| {
+            serde_json::from_str::<serde_json::Value>(&request.definition_json)
+                .ok()
+                .and_then(|value| value.get("document")?.get("name")?.as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| "Workflow".to_string());
+    let started_at = chrono::Utc::now().naive_utc();
+    let input_json = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+    let execution = ExecutionActiveModel {
+        id: sea_orm::NotSet,
+        workflow_id: Set(request.workflow_id),
+        workflow_name: Set(workflow_name.clone()),
+        status: Set("running".to_string()),
+        started_at: Set(started_at),
+        finished_at: Set(None),
+        duration_ms: Set(None),
+        input_json: Set(input_json.clone()),
+        output_json: Set(None),
+        error: Set(None),
+        definition_json: Set(request.definition_json.clone()),
+    };
+    let execution = execution.insert(&state.db).await.map_err(|error| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error.to_string()})))
+    })?;
+    let clock = std::time::Instant::now();
+
+    let result = async {
+        let definition = parse_ows_document(&request.definition_json)?;
+        let allowed_hosts = workflow_endpoint_hosts(&request.definition_json);
+        let policy = ows_runtime_core::RuntimePolicy {
+            allow_network: !allowed_hosts.is_empty(),
+            allowed_hosts,
+            allowed_schemes: vec!["http".to_string(), "https".to_string()],
+            ..Default::default()
+        };
+        let runtime = Runtime::builder()
+            .with_policy(policy)
+            .build()
+            .map_err(|error| format!("could not start OWS runtime: {error}"))?;
+        let workflow = runtime
+            .register_definition(&definition)
+            .map_err(|error| format!("could not compile OWS workflow: {error}"))?;
+        let handle = runtime
+            .execute(workflow, input.clone())
+            .await
+            .map_err(|error| format!("could not start OWS execution: {error}"))?;
+        let runtime_execution_id = handle.execution_id.clone();
+        let outcome = match handle.wait().await {
+            Ok(output) => (true, Some(output), None),
+            Err(error) => (false, None, Some(error.to_string())),
+        };
+        Ok::<_, String>((runtime_execution_id, outcome))
+    }
+    .await;
+
+    let (runtime_execution_id, success, output, error) = match result {
+        Ok((runtime_id, (success, output, error))) => (Some(runtime_id), success, output, error),
+        Err(error) => (None, false, None, Some(error)),
+    };
+    let finished_at = chrono::Utc::now().naive_utc();
+    let duration_ms = i64::try_from(clock.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let output_json = output.as_ref().and_then(|value| serde_json::to_string(value).ok());
+
+    let mut active = execution.clone().into_active_model();
+    active.status = Set(if success { "succeeded" } else { "failed" }.to_string());
+    active.finished_at = Set(Some(finished_at));
+    active.duration_ms = Set(Some(duration_ms));
+    active.output_json = Set(output_json.clone());
+    active.error = Set(error.clone());
+    active.update(&state.db).await.map_err(|update_error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": update_error.to_string()})),
+        )
+    })?;
+
+    let execution_id = runtime_execution_id.unwrap_or_else(|| execution.id.to_string());
+    Ok(Json(serde_json::json!({
+        "success": success,
+        "id": execution.id,
+        "execution_id": execution_id,
+        "workflow_id": request.workflow_id,
+        "workflow_name": workflow_name,
+        "status": if success { "succeeded" } else { "failed" },
+        "started_at": started_at,
+        "duration_ms": duration_ms,
+        "input": input,
+        "output": output,
+        "error": error,
+    })))
+}
+
+fn workflow_endpoint_hosts(definition_json: &str) -> Vec<String> {
+    fn collect(value: &serde_json::Value, hosts: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(object) => {
+                for (key, value) in object {
+                    if key == "endpoint" {
+                        if let Some(endpoint) = value.as_str() {
+                            if let Ok(url) = url::Url::parse(endpoint)
+                                && matches!(url.scheme(), "http" | "https")
+                                && let Some(host) = url.host_str()
+                                && !host.is_empty()
+                                && !hosts.iter().any(|existing| existing == host)
+                            {
+                                hosts.push(host.to_string());
+                            }
+                        }
+                    }
+                    collect(value, hosts);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    collect(item, hosts);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut hosts = Vec::new();
+    if let Ok(value) = serde_json::from_str(definition_json) {
+        collect(&value, &mut hosts);
+    }
+    hosts
+}
+
 fn ows_error(status: StatusCode, message: String) -> (StatusCode, Json<serde_json::Value>) {
     (
         status,
@@ -217,6 +447,8 @@ pub fn routes() -> axum::Router<AppState> {
     let router = axum::Router::new()
         .route("/api/workflows", get(list).post(create))
         .route("/api/workflows/validate", axum::routing::post(validate_ows))
+        .route("/api/workflows/execute", axum::routing::post(execute_ows))
+        .route("/api/executions", get(list_executions).post(execute_saved_workflow))
         .route("/api/workflows/{id}", get(read_one).put(update).delete(remove));
 
     router

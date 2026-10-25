@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::models::{Workflow, WorkflowPayload};
+use super::models::{ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
 
 #[derive(Debug, Deserialize)]
 struct ApiError {
@@ -90,6 +90,38 @@ pub(super) async fn validate_workflow(definition_json: String) -> Result<Vec<Str
             .map(|error| error.message.unwrap_or_else(|| "Invalid OWS definition".into()))
             .collect())
     }
+}
+
+pub(super) async fn execute_workflow(
+    definition_json: String, workflow_id: Option<i32>, workflow_name: Option<String>,
+) -> Result<ExecutionResult, String> {
+    let response = reqwest::Client::new()
+        .post(api_url("/api/workflows/execute"))
+        .json(&serde_json::json!({ "definition_json": definition_json, "workflow_id": workflow_id, "workflow_name": workflow_name, "input": {} }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    decode_response(response).await
+}
+
+pub(super) async fn list_executions() -> Result<Vec<ExecutionRecord>, String> {
+    let response =
+        reqwest::get(api_url("/api/executions")).await.map_err(|error| error.to_string())?;
+    decode_response(response).await
+}
+
+pub(crate) async fn execute_saved_workflow(
+    workflow_id: i32, input_json: String,
+) -> Result<ExecutionResult, String> {
+    let input: serde_json::Value = serde_json::from_str(&input_json)
+        .map_err(|error| format!("Input must be valid JSON: {error}"))?;
+    let response = reqwest::Client::new()
+        .post(api_url("/api/executions"))
+        .json(&serde_json::json!({ "workflow_id": workflow_id, "input": input }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    decode_response(response).await
 }
 
 async fn decode_response<T: for<'de> Deserialize<'de>>(
