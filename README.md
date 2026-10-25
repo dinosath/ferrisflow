@@ -5,15 +5,23 @@ use the Open Workflow Specification (OWS) / Open Workflow DSL.
 
 ## Run locally
 
-With Docker running, start the frontend, backend, and a temporary PostgreSQL
-Testcontainer:
+Start the Dioxus fullstack server with the default local SQLite database:
 
 ```sh
 mise run dev
 ```
 
-Open `http://localhost:5173`. The PostgreSQL container is removed when the
-backend dev task exits.
+Open `http://localhost:8080`. Dioxus serves the web UI and the existing REST API
+from the same Axum server. The database file is `ferris-workflow.db` in the project root.
+
+The UI is written in Dioxus. Its page components live in `src/pages/`, and the
+app configuration and assets live in `Dioxus.toml` and `assets/`. The UI uses
+the plain `/api/workflows` REST endpoints. Set `DATABASE_URL` to use a different
+database, including PostgreSQL.
+
+```sh
+dx serve --fullstack
+```
 
 ## API
 
@@ -68,5 +76,5 @@ JSON view remains available for the full specification surface.
 ```sh
 cargo check --offline
 cargo test --offline --lib ows
-cd frontend && pnpm build
+mise run dev
 ```

@@ -15,3 +15,9 @@ target/
 .env
 generated/**
 **/.DS_Store
+
+# Dioxus build output
+/dist
+
+# Local SQLite database
+ferris-workflow.db*

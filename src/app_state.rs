@@ -7,8 +7,10 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new() -> Self {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432".to_string());
+        let default_database_url =
+            concat!("sqlite://", env!("CARGO_MANIFEST_DIR"), "/ferris-workflow.db?mode=rwc");
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| default_database_url.to_string());
         let db =
             sea_orm::Database::connect(&database_url).await.expect("failed to connect to database");
         {

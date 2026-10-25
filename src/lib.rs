@@ -1,15 +1,18 @@
+#[cfg(not(target_arch = "wasm32"))]
 pub mod connect;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod controllers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod models {
     automod::dir!(pub "src/models");
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub mod app_state;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ows;
 
-use static_serve::embed_assets;
-
-embed_assets!("frontend/dist", compress = true, strip_html_ext = true);
 /// Build the axum [`Router`] with all routes and middleware.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_router(state: app_state::AppState) -> axum::Router {
     use axum::http::HeaderValue;
     use axum::http::header;
@@ -22,7 +25,6 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
         "/entities.v1.EntityService/Execute",
         connect_service.into_service::<axum::body::Body>(),
     );
-    router = router.merge(static_router());
     // ─── Security headers (always applied) ──────────────────────────────
     router = router
         .layer(SetResponseHeaderLayer::overriding(

@@ -1,0 +1,40 @@
+.breadcrumbs__document {
+  overflow: hidden;
+  max-width: min(42vw, 420px);
+  color: #29303d !important;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+.breadcrumbs__rename-input { width: min(300px, 42vw); height: 30px; padding: 0 7px; border: 1px solid #655dd8; border-radius: 6px; outline: 0; color: #29303d; font: inherit; box-shadow: 0 0 0 3px #655dd81c; }
+
+.document-menu-wrap { position: relative; z-index: 30; display: flex; align-items: center; }
+.document-menu-trigger { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #666d79; cursor: pointer; }
+.document-menu-trigger:hover, .document-menu-trigger[aria-expanded="true"] { background: #f0f1f4; color: #252a35; }
+.document-menu-trigger .ui-icon { width: 17px; height: 17px; }
+.document-menu { position: absolute; top: calc(100% + 9px); left: 0; z-index: 50; width: 250px; padding: 6px; border: 1px solid #e1e5ec; border-radius: 11px; background: #fff; box-shadow: 0 12px 32px #17203324; }
+.document-menu__item { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 38px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #343a46; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.document-menu__item:hover { background: #f4f5f8; }
+.document-menu__item .ui-icon { width: 16px; height: 16px; color: #9298a4; }
+.document-menu__item--danger { margin-top: 5px; padding-top: 5px; border-top: 1px solid #e7e9ef; border-radius: 0 0 7px 7px; color: #b4232f; }
+.document-menu__item--danger .ui-icon { color: #b4232f; }
+.workflow-form__name.is-renaming input { border-color: #655dd8; box-shadow: 0 0 0 3px #655dd81c; }
+.workflow-form__action-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #626a78; font-size: 12px; }
+.workflow-form__action-notice button { border: 0; background: transparent; color: #655dd8; font: inherit; font-weight: 600; cursor: pointer; }
+.breadcrumb-back { display: grid; place-items: center; width: 30px; height: 30px; margin-right: 3px; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; color: #4d5563; }
+.breadcrumb-back:hover { background: #f4f5f8; color: #1c2230; }
+.breadcrumb-back .ui-icon { width: 16px; height: 16px; }
+.breadcrumb-save { display: grid; place-items: center; width: 34px; height: 34px; margin-left: 3px; border: 1px solid #5c54c9; border-radius: 8px; background: #625bd5; color: #fff; cursor: pointer; }
+.breadcrumb-save:hover { background: #514ac2; }
+.breadcrumb-save:disabled { opacity: .65; cursor: wait; }
+.breadcrumb-save .ui-icon { width: 16px; height: 16px; }
+.breadcrumb-save__spinner { width: 15px; height: 15px; border: 2px solid #ffffff80; border-top-color: #fff; border-radius: 50%; animation: workflow-save-spin .7s linear infinite; }
+@keyframes workflow-save-spin { to { transform: rotate(360deg); } }
+.workflow-settings-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: #14182766; }
+.workflow-settings-dialog { width: min(460px, 100%); padding: 20px; border: 1px solid #e2e8f0; border-radius: 13px; background: #fff; box-shadow: 0 20px 60px #12182735; }
+.workflow-settings-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.workflow-settings-dialog__header h2 { margin: 0; color: #202431; font-size: 16px; font-weight: 650; }
+.workflow-settings-dialog .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; color: #555d6a; font-size: 12px; }
+.workflow-settings-dialog .field input, .workflow-settings-dialog .field textarea { width: 100%; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 7px; color: #252a35; font: inherit; font-size: 13px; }
+.workflow-settings-dialog .toggle-field { display: flex; align-items: center; gap: 8px; color: #414856; font-size: 12px; }

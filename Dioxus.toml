@@ -1,0 +1,13 @@
+[application]
+name = "ferris-workflow"
+default_platform = "web"
+asset_dir = "assets"
+out_dir = "dist"
+tailwind_input = "assets/dioxus-shadcn.css"
+tailwind_output = "assets/tailwind.css"
+
+[web.app]
+title = "Ferris Workflow"
+
+[web.watcher]
+watch_path = ["src", "assets"]

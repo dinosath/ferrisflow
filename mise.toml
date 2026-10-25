@@ -6,6 +6,7 @@ rust = "latest"
 "cargo:cargo-chef" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
+"cargo:dioxus-cli" = "latest"
 
 helm = "latest"
 node = "latest"
@@ -28,38 +29,31 @@ run = "baker update --non-interactive --skip-confirms all"
 sources = ['.baker/answers.json']
 
 
-[tasks.frontend-install]
-description = "Install frontend npm dependencies"
-dir = "frontend"
-run = "pnpm install"
-
 [tasks.frontend-dev]
-description = "Run frontend dev server"
-dir = "frontend"
-run = "pnpm run dev"
-depends = ["frontend-install"]
+description = "Run the Dioxus web app and REST API"
+dir = "."
+run = "dx serve --fullstack"
 
 [tasks.backend-dev]
-description = "Run backend with a temporary PostgreSQL container"
-run = "cargo run -p dev-runner"
+description = "Run the Dioxus app and REST API with local SQLite"
+run = "cargo run --features server"
 
 [tasks.dev]
-description = "Run frontend and backend dev servers"
-run = "cargo run -p dev-runner -- --with-frontend"
+description = "Run the Dioxus web app and REST API"
+dir = "."
+run = "dx serve --fullstack"
 
 
 
 [tasks.frontend-build]
-description = "Build frontend"
-dir = "frontend"
-run = "pnpm run build"
-depends = ["frontend-install"]
+description = "Build the Dioxus web app and REST API"
+run = "cargo build --release --features server"
 
 
 
 [tasks.build]
 description = "Build the project"
-run = "cargo build --release"
+run = "cargo build --release --features server"
 depends = "frontend-build"
 
 [tasks.test]
