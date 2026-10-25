@@ -9,7 +9,7 @@ mod pages;
 
 use pages::{
     Credentials, DataTables, EditWorkflow, Executions, NewWorkflow, Overview, Variables,
-    WorkflowDetail, WorkflowList,
+    ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
 #[global_allocator]
@@ -55,6 +55,8 @@ enum Route {
     NewWorkflow {},
     #[route("/workflows/:id/edit")]
     EditWorkflow { id: i32 },
+    #[route("/workflows/:id/executions/:execution_id")]
+    ViewWorkflowExecution { id: i32, execution_id: String },
     #[route("/workflows/:id")]
     WorkflowDetail { id: i32 },
     #[route("/executions")]

@@ -17,16 +17,21 @@ use crate::{
 
 #[component]
 pub(crate) fn NewWorkflow() -> Element {
-    rsx! { WorkflowPage { workflow_id: None } }
+    rsx! { WorkflowPage { workflow_id: None, initial_execution_id: None } }
 }
 
 #[component]
 pub(crate) fn EditWorkflow(id: i32) -> Element {
-    rsx! { WorkflowPage { workflow_id: Some(id) } }
+    rsx! { WorkflowPage { workflow_id: Some(id), initial_execution_id: None } }
 }
 
 #[component]
-fn WorkflowPage(workflow_id: Option<i32>) -> Element {
+pub(crate) fn ViewWorkflowExecution(id: i32, execution_id: String) -> Element {
+    rsx! { WorkflowPage { workflow_id: Some(id), initial_execution_id: Some(execution_id) } }
+}
+
+#[component]
+fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) -> Element {
     let workflow = use_resource(move || async move {
         match workflow_id {
             Some(id) => read_workflow(id).await.map(Some),
@@ -244,6 +249,7 @@ fn WorkflowPage(workflow_id: Option<i32>) -> Element {
                         notice: editor_notice,
                         workflow_id,
                         workflow_name: breadcrumb_title.clone(),
+                        initial_execution_id: initial_execution_id.clone(),
                     }
                 }
             }

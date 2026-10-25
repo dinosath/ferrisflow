@@ -223,6 +223,10 @@ pub(super) fn format_date(value: &str) -> String {
     value.split('T').next().unwrap_or(value).to_string()
 }
 
+pub(super) fn format_datetime(value: &str) -> String {
+    value.replace('T', " ").trim_end_matches(".000").to_string()
+}
+
 pub(super) fn pretty_json(value: &str) -> String {
     serde_json::from_str::<serde_json::Value>(value)
         .ok()

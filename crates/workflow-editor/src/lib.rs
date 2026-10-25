@@ -24,15 +24,42 @@ pub struct ValidationState {
 pub struct WorkflowExecution {
     pub running: bool,
     pub execution_id: Option<String>,
+    pub status: Option<String>,
+    pub started_at: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub input_json: Option<String>,
     pub output: Option<String>,
     pub error: Option<String>,
+    pub steps: Vec<WorkflowExecutionStep>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkflowExecutionStep {
+    pub name: String,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub input_json: Option<String>,
+    pub output_json: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkflowExecutionRecord {
+    pub execution_id: String,
+    pub status: String,
+    pub started_at: String,
+    pub duration_ms: Option<i64>,
+    pub input_json: String,
+    pub output_json: Option<String>,
+    pub error: Option<String>,
+    pub steps: Vec<WorkflowExecutionStep>,
 }
 
 #[component]
 pub fn WorkflowEditor(
     definition: String, on_change: EventHandler<String>, on_validate: EventHandler<String>,
     validation: ValidationState, execution: WorkflowExecution, on_execute: EventHandler<()>,
-    notice: Option<String>,
+    execution_history: Vec<WorkflowExecutionRecord>, notice: Option<String>,
+    #[props(default)] initial_execution_id: Option<String>,
 ) -> Element {
     let mut selected_index = use_signal(|| 0_usize);
     let mut inspector_open = use_signal(|| false);
@@ -56,14 +83,31 @@ pub fn WorkflowEditor(
     let mut pending_add_source = use_signal(|| None::<String>);
     let mut pending_insert_edge = use_signal(|| None::<(String, String)>);
     let mut selected_connection = use_signal(|| None::<(String, String)>);
-    let mut editor_tab = use_signal(|| "editor".to_string());
+    let mut editor_tab = use_signal(|| {
+        if initial_execution_id.is_some() { "executions".to_string() } else { "editor".to_string() }
+    });
+    let mut selected_execution_node = use_signal(|| None::<String>);
+    let mut selected_execution_id = use_signal(|| {
+        initial_execution_id
+            .clone()
+            .or_else(|| execution_history.first().map(|record| record.execution_id.clone()))
+    });
     let mut logs_open = use_signal(|| false);
+    let mut logs_height = use_signal(|| 300.0_f64);
+    let mut logs_resize_origin = use_signal(|| None::<(f64, f64)>);
     let mut execute_menu_open = use_signal(|| false);
     let mut json_draft = use_signal(|| definition.clone());
     let mut task_draft = use_signal(|| "{}".to_string());
     let mut edit_error = use_signal(|| None::<String>);
 
     let document = parse_document(&definition).unwrap_or_else(|_| starter_document());
+    let selected_execution = execution_history
+        .iter()
+        .find(|record| Some(record.execution_id.as_str()) == selected_execution_id().as_deref())
+        .or_else(|| execution_history.first())
+        .cloned();
+    let selected_execution_key =
+        selected_execution.as_ref().map(|record| record.execution_id.clone()).unwrap_or_default();
     let tasks = document["do"].as_array().cloned().unwrap_or_default();
     let content_width = (1000.0_f64).max(500.0 + tasks.len() as f64 * 230.0);
     let default_start_x =
@@ -158,9 +202,37 @@ pub fn WorkflowEditor(
         })
         .map(str::to_string)
         .collect::<Vec<_>>();
+    let editor_execution_records = if execution.running
+        || execution.execution_id.is_some()
+        || execution.error.is_some()
+    {
+        vec![WorkflowExecutionRecord {
+            execution_id: execution.execution_id.clone().unwrap_or_else(|| "current".to_string()),
+            status: execution.status.clone().unwrap_or_else(|| {
+                if execution.running { "running".to_string() } else { "failed".to_string() }
+            }),
+            started_at: execution.started_at.clone().unwrap_or_default(),
+            duration_ms: execution.duration_ms,
+            input_json: execution.input_json.clone().unwrap_or_else(|| "{}".to_string()),
+            output_json: execution.output.clone(),
+            error: execution.error.clone(),
+            steps: execution.steps.clone(),
+        }]
+    } else {
+        Vec::new()
+    };
 
     rsx! {
-        section { class: "workflow-editor",
+        section {
+            class: "workflow-editor",
+            onpointermove: move |event| {
+                if let Some((start_y, start_height)) = logs_resize_origin() {
+                    let current_y = event.data().client_coordinates().y;
+                    logs_height.set((start_height + start_y - current_y).clamp(150.0, 700.0));
+                    event.prevent_default();
+                }
+            },
+            onpointerup: move |_| logs_resize_origin.set(None),
             header { class: "workflow-editor__topbar",
                 nav { class: "workflow-editor__tabs", "aria-label": "Workflow sections",
                     for (tab, label) in [("editor", "Editor"), ("text", "Text editor"), ("executions", "Executions")] {
@@ -212,8 +284,35 @@ pub fn WorkflowEditor(
                     if let Some(message) = edit_error() { p { class: "workflow-editor__inline-error", "{message}" } }
                 }
             } else {
-                div { class: "workflow-editor__workspace",
-                    if palette_open() {
+                div { class: if editor_tab() == "executions" { "workflow-editor__workspace workflow-editor__workspace--executions" } else { "workflow-editor__workspace" },
+                    if editor_tab() == "executions" {
+                        aside { class: "workflow-execution-list",
+                            header { class: "workflow-execution-list__header",
+                                strong { "Executions" }
+                                span { "{execution_history.len()}" }
+                            }
+                            if execution_history.is_empty() {
+                                div { class: "workflow-execution-list__empty", "No executions yet." }
+                            } else {
+                                div { class: "workflow-execution-list__items",
+                                    for record in execution_history.iter() {
+                                        button {
+                                            class: if selected_execution.as_ref().is_some_and(|selected| selected.execution_id == record.execution_id) { "workflow-execution-list__item is-selected" } else { "workflow-execution-list__item" },
+                                            r#type: "button",
+                                            onclick: {
+                                                let id = record.execution_id.clone();
+                                                move |_| { selected_execution_id.set(Some(id.clone())); selected_execution_node.set(None); }
+                                            },
+                                            span { class: status_dot_class(&record.status) }
+                                            strong { "{record.started_at}" }
+                                            small { "{status_label(&record.status)} · {format_duration(record.duration_ms)}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if editor_tab() == "editor" && palette_open() {
                         div { class: "workflow-node-picker__overlay", role: "dialog", aria_modal: "true", aria_label: "Add a workflow node",
                             section { class: "workflow-node-picker panel",
                                 header { class: "workflow-node-picker__header",
@@ -420,14 +519,16 @@ pub fn WorkflowEditor(
                                 style: "width: {content_width}px; height: {content_height}px; transform: translate(calc(-50% + {canvas_pan().0}px), calc(-50% + {canvas_pan().1}px)) scale({zoom_percent() as f64 / 100.0});",
                                 if tasks.is_empty() {
                                     div { class: "workflow-editor__canvas-empty-state",
-                                        strong { "Start with a task" }
-                                        span { "OWS workflows begin with their first declared task." }
-                                        button {
-                                            class: "button button-primary",
-                                            r#type: "button",
-                                            onclick: move |_| { pending_add_source.set(None); pending_insert_edge.set(None); palette_open.set(true); },
-                                            EditorIcon { name: "plus", size: 15 }
-                                            " Add first task"
+                                        strong { if editor_tab() == "executions" { "No workflow steps" } else { "Start with a task" } }
+                                        span { if editor_tab() == "executions" { "This workflow does not contain any executable steps." } else { "OWS workflows begin with their first declared task." } }
+                                        if editor_tab() == "editor" {
+                                            button {
+                                                class: "button button-primary",
+                                                r#type: "button",
+                                                onclick: move |_| { pending_add_source.set(None); pending_insert_edge.set(None); palette_open.set(true); },
+                                                EditorIcon { name: "plus", size: 15 }
+                                                " Add first task"
+                                            }
                                         }
                                     }
                                 }
@@ -438,6 +539,7 @@ pub fn WorkflowEditor(
                                             let target = to.clone();
                                             let is_selected = selected_connection() == Some((source.clone(), target.clone()));
                                             rsx! {
+                                                if editor_tab() == "editor" {
                                                 path {
                                                     key: "edge-hit-{index}",
                                                     class: "workflow-editor__edge-hit",
@@ -448,6 +550,9 @@ pub fn WorkflowEditor(
                                                     class: if is_selected { "workflow-editor__edge is-selected" } else { "workflow-editor__edge" },
                                                     d: "{edge_paths[index]}"
                                                 }
+                                                } else {
+                                                    path { key: "readonly-edge-{index}", class: "workflow-editor__edge", d: "{edge_paths[index]}" }
+                                                }
                                             }
                                         }
                                     }
@@ -455,6 +560,7 @@ pub fn WorkflowEditor(
                                         path { key: "aux-edge-{index}", class: "workflow-editor__edge workflow-editor__edge--aux", d: "{edge_path}" }
                                     }
                                 }
+                                if editor_tab() == "editor" {
                                 for (from, to, midpoint) in connection_controls.iter() {
                                     if selected_connection() == Some((from.clone(), to.clone())) {
                                         div { class: "workflow-connection-actions", style: "left: {midpoint.0}px; top: {midpoint.1}px;",
@@ -472,6 +578,7 @@ pub fn WorkflowEditor(
                                         }
                                     }
                                 }
+                                }
                                 for (index, task) in tasks.iter().enumerate() {
                                     {
                                         let name = task_name(task).unwrap_or_else(|| "Unnamed task".into());
@@ -485,10 +592,12 @@ pub fn WorkflowEditor(
                                         let output_offsets = output_port_offsets(output_count);
                                         let task_value = task_definition(task).unwrap_or_else(|| json!({}));
                                         let position = positions[index];
+                                        let execution_highlighted = editor_tab() == "executions" && selected_execution_node().as_deref() == Some(name.as_str());
                                         let task_position = position;
                                         let positions_snapshot = positions.clone();
                                         rsx! {
-                                            div { class: "workflow-node-group workflow-node-group--canvas", style: "left: {position.0}px; top: {position.1}px;",
+                                            div { class: if editor_tab() == "executions" { "workflow-node-group workflow-node-group--canvas workflow-node-group--readonly" } else { "workflow-node-group workflow-node-group--canvas" }, style: "left: {position.0}px; top: {position.1}px;",
+                                                if editor_tab() == "editor" {
                                                 div { class: "workflow-node-actions",
                                                         button { class: "workflow-editor__node-action", title: "Validate workflow", aria_label: "Validate workflow", r#type: "button", onclick: { let current = definition.clone(); move |_| on_validate.call(current.clone()) }, EditorIcon { name: "play", size: 14 } }
                                                         button { class: if disabled { "workflow-editor__node-action is-muted" } else { "workflow-editor__node-action" }, title: if disabled { "Activate node" } else { "Deactivate node" }, aria_label: if disabled { "Activate node" } else { "Deactivate node" }, r#type: "button", onclick: {
@@ -556,12 +665,14 @@ pub fn WorkflowEditor(
                                                             }
                                                         }
                                                 }
+                                                }
                                                 button {
-                                                    class: if disabled && index == selected { "workflow-node is-disabled is-selected" } else if disabled { "workflow-node is-disabled" } else if index == selected { "workflow-node is-selected" } else { "workflow-node" },
+                                                    class: if execution_highlighted { "workflow-node is-execution-highlight" } else if editor_tab() == "editor" && disabled && index == selected { "workflow-node is-disabled is-selected" } else if disabled { "workflow-node is-disabled" } else if editor_tab() == "editor" && index == selected { "workflow-node is-selected" } else { "workflow-node" },
                                                     r#type: "button",
                                                     aria_label: "Select workflow step",
-                                                    title: "Drag to move · Click to select · Double-click to edit",
+                                                    title: if editor_tab() == "editor" { "Drag to move · Click to select · Double-click to edit" } else { "Workflow step" },
                                                     onpointerdown: move |event| {
+                                                        if editor_tab() == "executions" { return; }
                                                         if connecting_from().is_some() {
                                                             event.prevent_default();
                                                         } else if space_pressed() || event.data().modifiers().ctrl() || event.data().modifiers().meta() {
@@ -578,11 +689,12 @@ pub fn WorkflowEditor(
                                                             node_was_moved.set(false);
                                                         }
                                                     },
-                                                    onclick: move |_| { selected_index.set(index); more_menu_index.set(None); },
+                                                    onclick: move |_| { if editor_tab() == "editor" { selected_index.set(index); more_menu_index.set(None); } },
                                                     ondoubleclick: {
                                                         let value = task_value.clone();
-                                                        move |_| { selected_index.set(index); inspector_open.set(true); task_draft.set(format_json(&value)); edit_error.set(None); more_menu_index.set(None); }
+                                                        move |_| { if editor_tab() == "editor" { selected_index.set(index); inspector_open.set(true); task_draft.set(format_json(&value)); edit_error.set(None); more_menu_index.set(None); } }
                                                     },
+                                                    if editor_tab() == "editor" {
                                                     for (port_index, port_offset) in input_offsets.iter().enumerate() {
                                                         span {
                                                             key: "input-{port_index}",
@@ -607,7 +719,6 @@ pub fn WorkflowEditor(
                                                             span { class: "workflow-node__port-label workflow-node__port-label--in", style: "top: {port_offset}px;", "{port_index + 1}" }
                                                         }
                                                     }
-                                                    span { class: "workflow-node__icon", EditorIcon { name: icon, size: 30 } }
                                                     for (output_index, output_offset) in output_offsets.iter().enumerate() {
                                                         {
                                                             let source = connection_source_id(&name, output_index);
@@ -634,7 +745,17 @@ pub fn WorkflowEditor(
                                                             }
                                                         }
                                                     }
+                                                    } else {
+                                                        for (port_index, port_offset) in input_offsets.iter().enumerate() {
+                                                            span { key: "readonly-input-{port_index}", class: "workflow-node__port workflow-node__port--in", style: "top: {port_offset - 6.0}px;" }
+                                                        }
+                                                        for (port_index, port_offset) in output_offsets.iter().enumerate() {
+                                                            span { key: "readonly-output-{port_index}", class: "workflow-node__port workflow-node__port--out", style: "top: {port_offset - 6.0}px;" }
+                                                        }
+                                                    }
+                                                    span { class: "workflow-node__icon", EditorIcon { name: icon, size: 30 } }
                                                 }
+                                                if editor_tab() == "editor" {
                                                 for (output_index, output_offset) in output_offsets.iter().enumerate() {
                                                     {
                                                         let source = connection_source_id(&name, output_index);
@@ -653,17 +774,22 @@ pub fn WorkflowEditor(
                                                         }
                                                     }
                                                 }
+                                                }
                                                 div { class: "workflow-node-label", strong { "{name}" } small { "{pretty_type(&kind)}" } }
                                             }
                                         }
                                     }
                                 }
                             }
-                            if editor_tab() != "editor" {
-                                div { class: "workflow-editor__tab-empty",
-                                    EditorIcon { name: "clock", size: 24 }
-                                    strong { "No executions yet" }
-                                    span { "Run the workflow to see execution history." }
+                            if editor_tab() == "executions" {
+                                div { class: "workflow-editor__history",
+                                    WorkflowLogs {
+                                        key: "{selected_execution_key}",
+                                        records: selected_execution.iter().cloned().collect(),
+                                        empty_message: "Run this workflow to see its execution logs.".to_string(),
+                                        initial_execution_id: selected_execution.as_ref().map(|record| record.execution_id.clone()),
+                                        on_step_selected: move |node: Option<String>| selected_execution_node.set(node)
+                                    }
                                 }
                             }
                         }
@@ -679,7 +805,7 @@ pub fn WorkflowEditor(
                                 button { class: "workflow-editor__tool-button workflow-editor__tool-button--accent", title: "Workflow help", aria_label: "Workflow help", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), EditorIcon { name: "sparkles", size: 17 } }
                             }
                         }
-                        if editor_tab() == "editor" {
+                        if editor_tab() == "editor" || editor_tab() == "executions" {
                             div { class: "workflow-editor__zoom-controls",
                                 button { class: "workflow-editor__tool-button", title: "Fit workflow", aria_label: "Fit workflow", r#type: "button", onclick: {
                                     let current_positions = positions.clone();
@@ -732,24 +858,48 @@ pub fn WorkflowEditor(
                             }
                         }
                         }
-                        footer { class: if logs_open() { "workflow-editor__logs is-open" } else { "workflow-editor__logs" },
+                        if editor_tab() == "editor" {
+                        footer {
+                            class: if logs_open() { "workflow-editor__logs is-open" } else { "workflow-editor__logs" },
+                            style: "--workflow-logs-height: {logs_height()}px;",
+                            if logs_open() {
+                                div {
+                                    class: "workflow-editor__logs-resize-handle",
+                                    role: "separator",
+                                    aria_label: "Resize logs panel",
+                                    aria_orientation: "horizontal",
+                                    aria_valuenow: "{logs_height() as i32}",
+                                    tabindex: "0",
+                                    onpointerdown: move |event| {
+                                        let point = event.data().client_coordinates();
+                                        logs_open.set(true);
+                                        logs_resize_origin.set(Some((point.y, logs_height())));
+                                        event.prevent_default();
+                                    },
+                                    onkeydown: move |event| {
+                                        match event.key() {
+                                            Key::ArrowUp => logs_height.set((logs_height() + 20.0).min(700.0)),
+                                            Key::ArrowDown => logs_height.set((logs_height() - 20.0).max(150.0)),
+                                            _ => {}
+                                        }
+                                    },
+                                    span {}
+                                }
+                            }
                             button { class: "workflow-editor__logs-toggle", r#type: "button", onclick: move |_| logs_open.set(!logs_open()),
                                 span { "Logs" }
                                 if logs_open() { EditorIcon { name: "chevron-down", size: 14 } } else { EditorIcon { name: "chevron-up", size: 14 } }
                             }
                             if logs_open() {
                                 div { class: "workflow-editor__logs-content",
-                                    if execution.running { "Workflow is running…" }
-                                    if let Some(id) = execution.execution_id.as_ref() { div { class: "workflow-editor__execution-id", "Execution · {id}" } }
-                                    if let Some(error) = execution.error.as_ref() { div { class: "workflow-editor__execution-error", "{error}" } }
-                                    if let Some(output) = execution.output.as_ref() { pre { class: "workflow-editor__execution-output", "{output}" } }
-                                    if !execution.running && execution.execution_id.is_none() && execution.error.is_none() { "Run a workflow to see execution output." }
+                                    WorkflowLogs { records: editor_execution_records.clone(), empty_message: "Run the workflow from the editor to see its logs here.".to_string() }
                                 }
                             }
                         }
+                        }
                     }
 
-                    if inspector_open() {
+                    if editor_tab() == "editor" && inspector_open() {
                     div { class: "workflow-node-settings-overlay", role: "dialog", aria_modal: "true", aria_label: "Node settings",
                     aside { class: "workflow-editor__inspector workflow-node-settings-modal panel",
                         div { class: "workflow-editor__section-heading",
@@ -970,6 +1120,269 @@ fn starter_document() -> Value {
         },
         "do":[]
     })
+}
+
+fn format_duration(duration_ms: Option<i64>) -> String {
+    match duration_ms {
+        Some(milliseconds) if milliseconds < 1_000 => format!("{milliseconds} ms"),
+        Some(milliseconds) => format!("{:.2} s", milliseconds as f64 / 1_000.0),
+        None => "—".to_string(),
+    }
+}
+
+fn format_execution_json(value: &str) -> String {
+    serde_json::from_str::<Value>(value)
+        .ok()
+        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn execution_data_table(value: &str) -> Option<(Vec<String>, Vec<Vec<String>>)> {
+    let value = serde_json::from_str::<Value>(value).ok()?;
+    let rows = match &value {
+        Value::Array(rows) => rows.as_slice(),
+        Value::Object(object) if object.get("data").is_some_and(Value::is_array) => {
+            object.get("data")?.as_array()?.as_slice()
+        }
+        Value::Object(_) => std::slice::from_ref(&value),
+        _ => return None,
+    };
+    if rows.is_empty() || rows.iter().any(|row| !row.is_object()) {
+        return None;
+    }
+    let columns = rows
+        .iter()
+        .filter_map(Value::as_object)
+        .flat_map(|row| row.keys().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if columns.is_empty() {
+        return None;
+    }
+    let cells = rows
+        .iter()
+        .map(|row| {
+            let object = row.as_object().expect("rows were checked as objects");
+            columns
+                .iter()
+                .map(|column| object.get(column).map(format_table_value).unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    Some((columns, cells))
+}
+
+fn format_table_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => String::new(),
+        Value::Object(_) | Value::Array(_) => serde_json::to_string(value).unwrap_or_default(),
+        _ => value.to_string(),
+    }
+}
+
+fn execution_data_item_count(value: &str) -> usize {
+    serde_json::from_str::<Value>(value)
+        .ok()
+        .and_then(|value| match &value {
+            Value::Array(items) => Some(items.len()),
+            Value::Object(object) => object.get("data").and_then(Value::as_array).map(Vec::len),
+            _ => None,
+        })
+        .unwrap_or(1)
+}
+
+#[component]
+fn ExecutionDataTable(columns: Vec<String>, rows: Vec<Vec<String>>) -> Element {
+    rsx! {
+        div { class: "workflow-logs__table-wrap",
+            table { class: "workflow-logs__data-table",
+                thead { tr { for column in columns { th { "{column}" } } } }
+                tbody {
+                    for row in rows {
+                        tr { for cell in row { td { "{cell}" } } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn WorkflowLogs(
+    records: Vec<WorkflowExecutionRecord>, empty_message: String,
+    #[props(default)] on_step_selected: Option<EventHandler<Option<String>>>,
+    #[props(default)] initial_execution_id: Option<String>,
+) -> Element {
+    let mut selected_execution_id = use_signal(|| {
+        initial_execution_id
+            .clone()
+            .or_else(|| records.first().map(|record| record.execution_id.clone()))
+    });
+    let mut selected_step_index = use_signal(|| None::<usize>);
+    let mut detail_tab = use_signal(|| "output".to_string());
+    let selected_record = records
+        .iter()
+        .find(|record| selected_execution_id().as_deref() == Some(record.execution_id.as_str()))
+        .or_else(|| records.first())
+        .cloned();
+    let selected_step = selected_record
+        .as_ref()
+        .and_then(|record| selected_step_index().and_then(|index| record.steps.get(index)));
+    let detail_title =
+        selected_step.map(|step| step.name.as_str()).unwrap_or("When clicking ‘Execute workflow’");
+    let detail_status = selected_step
+        .map(|step| step.status.as_str())
+        .or_else(|| selected_record.as_ref().map(|record| record.status.as_str()))
+        .unwrap_or("");
+    let input_data = if selected_step.is_none() {
+        selected_record.as_ref().map(|record| record.input_json.as_str())
+    } else {
+        selected_step.and_then(|step| step.input_json.as_deref())
+    };
+    let output_data = if selected_step.is_none() {
+        selected_record.as_ref().and_then(|record| record.output_json.as_deref())
+    } else {
+        selected_step.and_then(|step| step.output_json.as_deref())
+    };
+    let input_table = input_data.and_then(execution_data_table);
+    let output_table = output_data.and_then(execution_data_table);
+    let item_count = if detail_tab() == "input" {
+        input_data.map(execution_data_item_count).unwrap_or(0)
+    } else {
+        output_data.map(execution_data_item_count).unwrap_or(0)
+    };
+    let item_label = if item_count == 1 { "item" } else { "items" };
+    rsx! {
+        div { class: "workflow-logs",
+            if records.is_empty() {
+                div { class: "workflow-logs__empty",
+                    EditorIcon { name: "clock", size: 22 }
+                    strong { "No execution data" }
+                    span { "{empty_message}" }
+                }
+            } else {
+                div { class: "workflow-logs__sidebar",
+                    header { class: "workflow-logs__sidebar-header",
+                        strong { "Logs" }
+                        if records.len() > 1 { span { "{records.len()} executions" } }
+                    }
+                    if records.len() > 1 {
+                        div { class: "workflow-logs__runs",
+                            for record in records.iter() {
+                                button {
+                                    class: if selected_record.as_ref().is_some_and(|selected| selected.execution_id == record.execution_id) { "workflow-logs__run is-selected" } else { "workflow-logs__run" },
+                                    r#type: "button",
+                                    onclick: {
+                                        let id = record.execution_id.clone();
+                                        move |_| { selected_execution_id.set(Some(id.clone())); selected_step_index.set(None); if let Some(handler) = on_step_selected { handler.call(None); } }
+                                    },
+                                    span { class: status_class(&record.status), "{status_label(&record.status)}" }
+                                    strong { "#{record.execution_id}" }
+                                    small { "{record.started_at}" }
+                                    small { "{format_duration(record.duration_ms)}" }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(record) = selected_record.as_ref() {
+                        div { class: "workflow-logs__run-summary",
+                            span { class: status_class(&record.status), "{status_label(&record.status)}" }
+                            strong { "in {format_duration(record.duration_ms)}" }
+                        }
+                        div { class: "workflow-logs__steps",
+                            button {
+                                class: if selected_step_index().is_none() { "workflow-logs__step is-selected" } else { "workflow-logs__step" },
+                                r#type: "button",
+                                onclick: move |_| { selected_step_index.set(None); detail_tab.set("output".to_string()); if let Some(handler) = on_step_selected { handler.call(None); } },
+                                EditorIcon { name: "play", size: 15 }
+                                span { "When clicking ‘Execute workflow’" }
+                                small { "{status_label(&record.status)} in {format_duration(record.duration_ms)}" }
+                            }
+                            for (index, step) in record.steps.iter().enumerate() {
+                                button {
+                                    class: if selected_step_index() == Some(index) { "workflow-logs__step is-selected" } else { "workflow-logs__step" },
+                                    r#type: "button",
+                                    onclick: {
+                                        let step_name = step.name.clone();
+                                        move |_| { selected_step_index.set(Some(index)); detail_tab.set("output".to_string()); if let Some(handler) = on_step_selected { handler.call(Some(step_name.clone())); } }
+                                    },
+                                    EditorIcon { name: "workflow", size: 15 }
+                                    span { "{step.name}" }
+                                    small { "{status_label(&step.status)}" }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(record) = selected_record.as_ref() {
+                    div { class: "workflow-logs__detail",
+                        header { class: "workflow-logs__detail-header",
+                            div { class: "workflow-logs__detail-title",
+                                strong { "{detail_title}" }
+                                span { class: status_class(detail_status), "{status_label(detail_status)}" }
+                                small { "#{record.execution_id}" }
+                            }
+                            nav { class: "workflow-logs__detail-tabs", "aria-label": "Execution data",
+                                button { class: if detail_tab() == "input" { "is-active" } else { "" }, r#type: "button", onclick: move |_| detail_tab.set("input".to_string()), "Input" }
+                                button { class: if detail_tab() == "output" { "is-active" } else { "" }, r#type: "button", onclick: move |_| detail_tab.set("output".to_string()), "Output" }
+                            }
+                        }
+                        if let Some(error) = record.error.as_ref() { div { class: "workflow-logs__error", strong { "Execution failed" } p { "{error}" } } }
+                        div { class: "workflow-logs__payload-heading",
+                            strong { if detail_tab() == "input" { "INPUT" } else { "OUTPUT" } }
+                            span { "{item_count} {item_label}" }
+                        }
+                        if detail_tab() == "input" {
+                            if let Some(input) = input_data {
+                                if let Some((columns, rows)) = input_table.as_ref() {
+                                    ExecutionDataTable { columns: columns.clone(), rows: rows.clone() }
+                                } else {
+                                    pre { class: "workflow-logs__payload", "{format_execution_json(input)}" }
+                                }
+                            }
+                            else { div { class: "workflow-logs__payload-empty", "This step has no input snapshot." } }
+                        } else if let Some(output) = output_data {
+                            if let Some((columns, rows)) = output_table.as_ref() {
+                                ExecutionDataTable { columns: columns.clone(), rows: rows.clone() }
+                            } else {
+                                pre { class: "workflow-logs__payload", "{format_execution_json(output)}" }
+                            }
+                        } else {
+                            div { class: "workflow-logs__payload-empty", "This step has no output snapshot." }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn status_label(status: &str) -> &'static str {
+    match status {
+        "succeeded" | "success" => "Success",
+        "running" => "Running",
+        _ => "Failed",
+    }
+}
+
+fn status_class(status: &str) -> &'static str {
+    match status {
+        "succeeded" | "success" => "workflow-logs__status workflow-logs__status--success",
+        "running" => "workflow-logs__status workflow-logs__status--running",
+        _ => "workflow-logs__status workflow-logs__status--failed",
+    }
+}
+
+fn status_dot_class(status: &str) -> &'static str {
+    match status {
+        "succeeded" | "success" => {
+            "workflow-execution-list__status workflow-execution-list__status--success"
+        }
+        "running" => "workflow-execution-list__status workflow-execution-list__status--running",
+        _ => "workflow-execution-list__status workflow-execution-list__status--failed",
+    }
 }
 
 fn read_canvas_positions(document: &Value, tasks: &[Value], start_x: f64) -> Vec<(f64, f64)> {

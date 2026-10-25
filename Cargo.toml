@@ -71,6 +71,7 @@ wasm-bindgen = "0.2"
 [features]
 default = ["web"]
 web = ["dioxus/web"]
+mobile = ["dioxus/mobile"]
 server = ["dioxus/server"]
 
 [build-dependencies]

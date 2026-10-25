@@ -26,8 +26,20 @@ pub(super) struct WorkflowPayload {
 pub(crate) struct ExecutionResult {
     pub(crate) success: bool,
     pub(crate) execution_id: String,
+    pub(crate) started_at: String,
+    pub(crate) duration_ms: i64,
     pub(crate) output: Option<Value>,
     pub(crate) error: Option<String>,
+    pub(crate) logs: Vec<ExecutionStep>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub(crate) struct ExecutionStep {
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) duration_ms: Option<i64>,
+    pub(crate) input_json: Option<String>,
+    pub(crate) output_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -38,10 +50,12 @@ pub(super) struct ExecutionRecord {
     pub(super) workflow_name: String,
     pub(super) status: String,
     pub(super) started_at: String,
+    pub(super) finished_at: Option<String>,
     pub(super) duration_ms: Option<i64>,
     pub(super) input_json: String,
     pub(super) output_json: Option<String>,
     pub(super) error: Option<String>,
+    pub(super) logs: Vec<ExecutionStep>,
 }
 
 pub(super) const DEFAULT_OWS: &str = r#"{

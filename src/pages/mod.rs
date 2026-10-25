@@ -13,6 +13,6 @@ pub(crate) use data_tables::DataTables;
 pub(crate) use overview::Overview;
 pub(crate) use ows_editor::OwsEditor;
 pub(crate) use workflow_detail::WorkflowDetail;
-pub(crate) use workflow_form::{EditWorkflow, NewWorkflow};
+pub(crate) use workflow_form::{EditWorkflow, NewWorkflow, ViewWorkflowExecution};
 pub(crate) use workflow_list::WorkflowList;
 pub(crate) use workspace_sections::{Credentials, Executions, Variables};

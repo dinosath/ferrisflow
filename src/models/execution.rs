@@ -17,6 +17,7 @@ pub struct Model {
     pub output_json: Option<String>,
     pub error: Option<String>,
     pub definition_json: String,
+    pub logs_json: String,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

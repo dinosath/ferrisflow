@@ -220,6 +220,16 @@ pub struct ExecutionResponse {
     pub input_json: String,
     pub output_json: Option<String>,
     pub error: Option<String>,
+    pub logs: Vec<ExecutionStepResponse>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ExecutionStepResponse {
+    pub name: String,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub input_json: Option<String>,
+    pub output_json: Option<String>,
 }
 
 impl From<ExecutionModel> for ExecutionResponse {
@@ -236,6 +246,7 @@ impl From<ExecutionModel> for ExecutionResponse {
             input_json: model.input_json,
             output_json: model.output_json,
             error: model.error,
+            logs: serde_json::from_str(&model.logs_json).unwrap_or_default(),
         }
     }
 }
@@ -325,6 +336,7 @@ async fn run_ows(
         output_json: Set(None),
         error: Set(None),
         definition_json: Set(request.definition_json.clone()),
+        logs_json: Set("[]".to_string()),
     };
     let execution = execution.insert(&state.db).await.map_err(|error| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error.to_string()})))
@@ -356,17 +368,33 @@ async fn run_ows(
             Ok(output) => (true, Some(output), None),
             Err(error) => (false, None, Some(error.to_string())),
         };
-        Ok::<_, String>((runtime_execution_id, outcome))
+        let task_order = runtime.take_task_order();
+        Ok::<_, String>((runtime_execution_id, outcome, task_order))
     }
     .await;
 
-    let (runtime_execution_id, success, output, error) = match result {
-        Ok((runtime_id, (success, output, error))) => (Some(runtime_id), success, output, error),
-        Err(error) => (None, false, None, Some(error)),
+    let (runtime_execution_id, success, output, error, task_order) = match result {
+        Ok((runtime_id, (success, output, error), task_order)) => {
+            (Some(runtime_id), success, output, error, task_order)
+        }
+        Err(error) => (None, false, None, Some(error), Vec::new()),
     };
     let finished_at = chrono::Utc::now().naive_utc();
     let duration_ms = i64::try_from(clock.elapsed().as_millis()).unwrap_or(i64::MAX);
     let output_json = output.as_ref().and_then(|value| serde_json::to_string(value).ok());
+    let logs = task_order
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ExecutionStepResponse {
+            name: name.clone(),
+            status: if success || index + 1 < task_order.len() { "succeeded" } else { "failed" }
+                .to_string(),
+            duration_ms: None,
+            input_json: (index == 0).then(|| input_json.clone()),
+            output_json: (index + 1 == task_order.len()).then(|| output_json.clone()).flatten(),
+        })
+        .collect::<Vec<_>>();
+    let logs_json = serde_json::to_string(&logs).unwrap_or_else(|_| "[]".to_string());
 
     let mut active = execution.clone().into_active_model();
     active.status = Set(if success { "succeeded" } else { "failed" }.to_string());
@@ -374,6 +402,7 @@ async fn run_ows(
     active.duration_ms = Set(Some(duration_ms));
     active.output_json = Set(output_json.clone());
     active.error = Set(error.clone());
+    active.logs_json = Set(logs_json.clone());
     active.update(&state.db).await.map_err(|update_error| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -394,6 +423,7 @@ async fn run_ows(
         "input": input,
         "output": output,
         "error": error,
+        "logs": logs,
     })))
 }
 
