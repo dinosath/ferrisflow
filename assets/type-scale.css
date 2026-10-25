@@ -334,3 +334,36 @@ body { padding: 0; background: #fff; }
   .workspace { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
   .topbar { width: 100%; margin: 0; border-radius: 0; }
 }
+
+/* Shared workspace sidebar resize affordance. */
+.app-sidebar { position: sticky; }
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 60;
+  top: 18px;
+  right: -5px;
+  bottom: 18px;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.sidebar-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  content: "";
+  transition: background-color 120ms ease;
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resizing .sidebar-resize-handle::after { background: #a1a1aa; }
+.sidebar-resizing,
+.sidebar-resizing * { cursor: col-resize !important; user-select: none !important; }
+@media (max-width: 760px) {
+  .sidebar-resize-handle { display: none; }
+}

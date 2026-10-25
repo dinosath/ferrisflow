@@ -503,16 +503,66 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: 24px;
   background: #17203340;
   backdrop-filter: blur(2px);
 }
 .workflow-editor__inspector.workflow-node-settings-modal {
   position: relative;
   inset: auto;
-  width: min(520px, calc(100vw - 32px));
-  max-height: min(82vh, 760px);
-  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw - 48px);
+  height: calc(100vh - 48px);
+  max-height: none;
+  padding: 18px;
+  overflow: hidden;
+}
+.workflow-node-settings-modal > .workflow-editor__section-heading { flex: 0 0 auto; margin: 0 0 12px; }
+.workflow-http-trigger-editor { display: grid; flex: 1 1 auto; min-height: 0; grid-template-columns: minmax(220px, 1fr) minmax(340px, .72fr) minmax(220px, 1fr); overflow: hidden; border: 1px solid var(--editor-border); border-radius: 10px; background: #fff; }
+.workflow-http-trigger-editor__overview, .workflow-http-trigger-editor__output { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 28px; background: #f8f9fb; }
+.workflow-http-trigger-editor__overview { justify-content: center; align-items: center; text-align: center; border-right: 1px solid var(--editor-border); }
+.workflow-http-trigger-editor__overview h2 { margin: 14px 0 5px; color: var(--editor-ink); font-size: 20px; }
+.workflow-http-trigger-editor__overview p { max-width: 360px; color: var(--editor-muted); font-size: 13px; line-height: 1.5; }
+.workflow-http-trigger-editor__icon { display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid var(--editor-border); border-radius: 15px; background: #fff; color: var(--editor-accent); }
+.workflow-http-trigger-editor__url-label { margin-top: 32px; color: var(--editor-muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
+.workflow-http-trigger-editor__url { max-width: 100%; margin-top: 8px; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--editor-border); border-radius: 8px; background: #fff; color: var(--editor-ink); font-size: 12px; }
+.workflow-http-trigger-editor__muted { font-size: 11px !important; }
+.workflow-http-trigger-editor__parameters { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
+.workflow-http-trigger-editor__tabs { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--editor-border); }
+.workflow-http-trigger-editor__tabs > button:not(.button) { height: 38px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--editor-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.workflow-http-trigger-editor__tabs > button.is-active { border-bottom-color: #f97316; color: #ea580c; font-weight: 600; }
+.workflow-http-trigger-editor__tabs .button { margin-left: auto; }
+.workflow-http-trigger-editor__spacer { flex: 1; }
+.workflow-http-trigger-editor__form-scroll { min-height: 0; overflow: auto; padding: 16px 18px 24px; }
+.workflow-http-trigger-editor__form-scroll .field { margin: 13px 0; font-size: 12px; }
+.workflow-http-trigger-editor__form-scroll select { min-height: 36px; padding: 0 10px; border: 1px solid var(--editor-border); border-radius: 7px; background: #fff; color: var(--editor-ink); font: inherit; font-size: 12px; }
+.workflow-http-trigger-editor__url-preview { display: grid; gap: 9px; margin: 8px 0 16px; padding: 12px; border: 1px solid var(--editor-border); border-radius: 8px; background: #fafafa; }
+.workflow-http-trigger-editor__url-preview strong, .workflow-http-trigger-editor__options-heading strong { color: #4b5563; font-size: 11px; }
+.workflow-http-trigger-editor__url-line { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.workflow-http-trigger-editor__method-badge { padding: 3px 6px; border-radius: 4px; background: #e5e7eb; color: #4b5563; font-size: 10px; font-weight: 700; }
+.workflow-http-trigger-editor__notice { margin: 12px 0 18px; padding: 10px; border-left: 3px solid #f59e0b; background: #fffbeb; color: #6b5b37; font-size: 11px; line-height: 1.45; }
+.workflow-http-trigger-editor__options-heading { margin-top: 22px; padding: 12px 0 8px; border-top: 1px solid var(--editor-border); }
+.workflow-http-trigger-editor__toggle { display: flex; align-items: center; gap: 10px; min-height: 42px; color: #424957; font-size: 12px; cursor: pointer; }
+.workflow-http-trigger-editor__toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.workflow-http-trigger-editor__switch { position: relative; width: 34px; height: 19px; flex: 0 0 auto; border-radius: 999px; background: #c4c7cc; transition: background 120ms ease; }
+.workflow-http-trigger-editor__switch::after { position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: white; content: ""; transition: transform 120ms ease; }
+.workflow-http-trigger-editor__toggle input:checked + .workflow-http-trigger-editor__switch { background: #202431; }
+.workflow-http-trigger-editor__toggle input:checked + .workflow-http-trigger-editor__switch::after { transform: translateX(15px); }
+.workflow-http-trigger-editor__output { border-left: 1px solid var(--editor-border); }
+.workflow-http-trigger-editor__output > .workflow-editor__eyebrow { letter-spacing: .18em; }
+.workflow-http-trigger-editor__empty-output { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--editor-muted); text-align: center; }
+.workflow-http-trigger-editor__empty-output strong { color: #424957; font-size: 14px; }
+.workflow-http-trigger-editor__empty-output small { max-width: 270px; font-size: 11px; line-height: 1.5; }
+@media (max-width: 900px) {
+  .workflow-http-trigger-editor { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+  .workflow-http-trigger-editor__output { display: none; }
+}
+@media (max-width: 620px) {
+  .workflow-node-settings-overlay { padding: 8px; }
+  .workflow-editor__inspector.workflow-node-settings-modal { width: calc(100vw - 16px); height: calc(100vh - 16px); padding: 10px; }
+  .workflow-http-trigger-editor { grid-template-columns: 1fr; }
+  .workflow-http-trigger-editor__overview { display: none; }
 }
 
 /* Keep the workflow editor inside the available viewport instead of growing the page. */

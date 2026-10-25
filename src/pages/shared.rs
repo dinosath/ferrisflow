@@ -1,8 +1,91 @@
 use crate::components::icons::Icon;
 use crate::components::ui::badge::{Badge, BadgeVariant};
+use crate::components::ui::script::{Script, component_script};
 use dioxus::prelude::*;
 
 use crate::Route;
+
+component_script!(
+    sidebar_resize_script = r#"
+export async function run(dioxus) {
+  if (window.__ferrisflowSidebarResizeInstalled) return;
+  window.__ferrisflowSidebarResizeInstalled = true;
+
+  const minWidth = 210;
+  const maxWidth = 380;
+  const storageKey = "ferrisflow-sidebar-width";
+  let drag = null;
+
+  const applyWidth = (shell, width, save = false) => {
+    const max = Math.min(maxWidth, Math.max(minWidth, window.innerWidth - 280));
+    const next = Math.round(Math.min(max, Math.max(minWidth, width)));
+    shell.style.setProperty("--sidebar-width", `${next}px`);
+    const handle = shell.querySelector(".sidebar-resize-handle");
+    if (handle) handle.setAttribute("aria-valuenow", String(next));
+    if (save) {
+      try { localStorage.setItem(storageKey, String(next)); } catch (_) {}
+    }
+  };
+
+  const restoreWidth = () => {
+    if (window.innerWidth <= 760) return;
+    const shell = document.querySelector(".app-shell");
+    if (!shell) return;
+    try {
+      const saved = Number(localStorage.getItem(storageKey));
+      if (Number.isFinite(saved) && saved > 0) applyWidth(shell, saved);
+    } catch (_) {}
+  };
+
+  document.addEventListener("pointerdown", (event) => {
+    const handle = event.target.closest?.(".sidebar-resize-handle");
+    if (!handle || event.button !== 0 || window.innerWidth <= 760) return;
+    const shell = handle.closest(".app-shell");
+    const sidebar = shell?.querySelector(".app-sidebar");
+    if (!shell || !sidebar) return;
+    event.preventDefault();
+    handle.setPointerCapture?.(event.pointerId);
+    drag = { shell, startX: event.clientX, startWidth: sidebar.getBoundingClientRect().width };
+    shell.classList.add("sidebar-resizing");
+  }, true);
+
+  window.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    applyWidth(drag.shell, drag.startWidth + event.clientX - drag.startX);
+  });
+
+  const finishDrag = () => {
+    if (!drag) return;
+    const { shell } = drag;
+    drag = null;
+    shell.classList.remove("sidebar-resizing");
+    const sidebar = shell.querySelector(".app-sidebar");
+    if (sidebar) applyWidth(shell, sidebar.getBoundingClientRect().width, true);
+  };
+  window.addEventListener("pointerup", finishDrag);
+  window.addEventListener("pointercancel", finishDrag);
+
+  document.addEventListener("keydown", (event) => {
+    const handle = event.target.closest?.(".sidebar-resize-handle");
+    if (!handle || window.innerWidth <= 760) return;
+    const shell = handle.closest(".app-shell");
+    const sidebar = shell?.querySelector(".app-sidebar");
+    if (!shell || !sidebar) return;
+    const current = sidebar.getBoundingClientRect().width;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      applyWidth(shell, current + (event.key === "ArrowRight" ? 16 : -16), true);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyWidth(shell, 256, true);
+    }
+  });
+
+  restoreWidth();
+  new MutationObserver(restoreWidth).observe(document.documentElement, { childList: true, subtree: true });
+}
+"#
+);
 
 #[component]
 pub(crate) fn Shell(
@@ -18,6 +101,9 @@ pub(crate) fn Shell(
     let mut document_menu = use_signal(|| false);
     let mut breadcrumb_editing = use_signal(|| false);
     let mut breadcrumb_draft = use_signal(String::new);
+    use_effect(move || {
+        let _script = sidebar_resize_script::start();
+    });
     rsx! {
         div { class: "app-shell",
             aside { class: "app-sidebar",
@@ -62,6 +148,17 @@ pub(crate) fn Shell(
                     button { class: "sidebar-link", r#type: "button", span { class: "sidebar-icon", Icon { name: "help" } } "Help center" }
                 }
                 div { class: "sidebar-user", span { class: "sidebar-user__avatar", "FF" } span { strong { "Ferris Flow" } small { "Local user" } } span { class: "sidebar-user__menu", Icon { name: "chevron-down" } } }
+                div {
+                    class: "sidebar-resize-handle",
+                    role: "separator",
+                    tabindex: "0",
+                    aria_label: "Resize sidebar",
+                    aria_orientation: "vertical",
+                    aria_valuemin: "210",
+                    aria_valuemax: "380",
+                    aria_valuenow: "256",
+                    title: "Drag to resize sidebar. Use left and right arrow keys to adjust.",
+                }
             }
             div { class: "workspace",
                 header { class: "topbar",
