@@ -60,6 +60,9 @@ pub fn WorkflowEditor(
     validation: ValidationState, execution: WorkflowExecution, on_execute: EventHandler<()>,
     execution_history: Vec<WorkflowExecutionRecord>, notice: Option<String>,
     #[props(default)] initial_execution_id: Option<String>,
+    #[props(default)] database_backend: String, #[props(default)] database_tables: Vec<String>,
+    #[props(default)] database_listening: bool, #[props(default)] database_event: Option<String>,
+    on_listen_database_event: EventHandler<String>,
 ) -> Element {
     let mut selected_index = use_signal(|| 0_usize);
     let mut inspector_open = use_signal(|| false);
@@ -206,8 +209,8 @@ pub fn WorkflowEditor(
         .unwrap_or_default();
     let selected_definition =
         selected_task.as_ref().and_then(task_definition).unwrap_or_else(|| json!({}));
-    let selected_type = if selected_trigger.is_some() {
-        "http"
+    let selected_type = if let Some(trigger) = selected_trigger.as_ref() {
+        trigger["type"].as_str().unwrap_or("http")
     } else {
         selected_definition
             .as_object()
@@ -378,6 +381,31 @@ pub fn WorkflowEditor(
                                         span { class: "workflow-node-picker__copy",
                                             strong { "HTTP Trigger" }
                                             small { "Start a workflow from an HTTP request" }
+                                        }
+                                        span { class: "workflow-editor__palette-chevron", EditorIcon { name: "arrow-up-right", size: 14 } }
+                                    }
+                                    button {
+                                        class: "workflow-editor__palette-item",
+                                        r#type: "button",
+                                        onclick: {
+                                            let mut next = document.clone();
+                                            move |_| {
+                                                let mut next_triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
+                                                let index = next_triggers.len();
+                                                next_triggers.push(create_database_trigger());
+                                                if !next["document"]["metadata"].is_object() { next["document"]["metadata"] = json!({}); }
+                                                next["document"]["metadata"]["triggers"] = Value::Array(next_triggers);
+                                                selected_index.set(0);
+                                                selected_trigger_index.set(Some(index));
+                                                inspector_open.set(true);
+                                                palette_open.set(false);
+                                                on_change.call(format_json(&next));
+                                            }
+                                        },
+                                        span { class: "workflow-editor__palette-icon", EditorIcon { name: "table", size: 18 } }
+                                        span { class: "workflow-node-picker__copy",
+                                            strong { "Database Trigger" }
+                                            small { "Start on SQLite or PostgreSQL row changes" }
                                         }
                                         span { class: "workflow-editor__palette-chevron", EditorIcon { name: "arrow-up-right", size: 14 } }
                                     }
@@ -644,8 +672,17 @@ pub fn WorkflowEditor(
                                 for (trigger_index, trigger) in triggers.iter().enumerate() {
                                     {
                                         let position = trigger_positions[trigger_index];
-                                        let method = trigger["method"].as_str().unwrap_or("GET");
-                                        let path = trigger["path"].as_str().unwrap_or("/");
+                                        let is_database_trigger = trigger["type"].as_str() == Some("database");
+                                        let method = if is_database_trigger {
+                                            trigger["table"].as_str().unwrap_or("Select table")
+                                        } else {
+                                            trigger["method"].as_str().unwrap_or("GET")
+                                        };
+                                        let path = if is_database_trigger {
+                                            "row changes"
+                                        } else {
+                                            trigger["path"].as_str().unwrap_or("/")
+                                        };
                                         let selected_trigger_node = editor_tab() == "editor"
                                             && selected_trigger_index() == Some(trigger_index);
                                         rsx! {
@@ -655,8 +692,8 @@ pub fn WorkflowEditor(
                                                 button {
                                                     class: if selected_trigger_node { "workflow-node workflow-node--trigger is-selected" } else { "workflow-node workflow-node--trigger" },
                                                     r#type: "button",
-                                                    title: if editor_tab() == "editor" { "HTTP Trigger · Double-click to edit" } else { "HTTP Trigger" },
-                                                    aria_label: "HTTP Trigger",
+                                                    title: "Workflow trigger · Double-click to edit",
+                                                    aria_label: "Workflow trigger",
                                                     onclick: move |_| {
                                                         if editor_tab() == "editor" {
                                                             selected_trigger_index.set(Some(trigger_index));
@@ -673,7 +710,7 @@ pub fn WorkflowEditor(
                                                     },
                                                     span { class: "workflow-node__icon", EditorIcon { name: "radio", size: 30 } }
                                                 }
-                                                span { class: "workflow-node__port workflow-node__port--out", title: "HTTP trigger output" }
+                                                span { class: "workflow-node__port workflow-node__port--out", title: "Trigger output" }
                                                 div { class: "workflow-node-label",
                                                     strong { "{trigger[\"name\"].as_str().unwrap_or(\"HTTP Trigger\")}" }
                                                     small { "{method} · {path}" }
@@ -1046,17 +1083,41 @@ pub fn WorkflowEditor(
                             }
                         }
                         if let Some(trigger) = selected_trigger.clone() {
-                            HttpTriggerSettings {
-                                trigger,
-                                on_change: {
-                                    let mut next = document.clone();
-                                    move |updated: Value| {
-                                        if let Some(index) = selected_trigger_index() {
-                                            let mut triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
-                                            if index < triggers.len() {
-                                                triggers[index] = updated;
-                                                next["document"]["metadata"]["triggers"] = Value::Array(triggers);
-                                                on_change.call(format_json(&next));
+                            if trigger["type"].as_str() == Some("database") {
+                                DatabaseTriggerSettings {
+                                    trigger,
+                                    backend: database_backend.clone(),
+                                    tables: database_tables.clone(),
+                                    listening: database_listening,
+                                    event_output: database_event.clone(),
+                                    on_listen: on_listen_database_event,
+                                    on_change: {
+                                        let mut next = document.clone();
+                                        move |updated: Value| {
+                                            if let Some(index) = selected_trigger_index() {
+                                                let mut triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
+                                                if index < triggers.len() {
+                                                    triggers[index] = updated;
+                                                    next["document"]["metadata"]["triggers"] = Value::Array(triggers);
+                                                    on_change.call(format_json(&next));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                HttpTriggerSettings {
+                                    trigger,
+                                    on_change: {
+                                        let mut next = document.clone();
+                                        move |updated: Value| {
+                                            if let Some(index) = selected_trigger_index() {
+                                                let mut triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
+                                                if index < triggers.len() {
+                                                    triggers[index] = updated;
+                                                    next["document"]["metadata"]["triggers"] = Value::Array(triggers);
+                                                    on_change.call(format_json(&next));
+                                                }
                                             }
                                         }
                                     }
@@ -1240,6 +1301,106 @@ pub fn WorkflowEditor(
 }
 
 #[component]
+fn DatabaseTriggerSettings(
+    trigger: Value, backend: String, tables: Vec<String>, listening: bool,
+    event_output: Option<String>, on_listen: EventHandler<String>, on_change: EventHandler<Value>,
+) -> Element {
+    let table = trigger["table"].as_str().unwrap_or("").to_string();
+    let name = trigger["name"].as_str().unwrap_or("Database Trigger").to_string();
+    let events = trigger["events"].as_array().cloned().unwrap_or_else(|| {
+        vec![
+            Value::String("INSERT".into()),
+            Value::String("UPDATE".into()),
+            Value::String("DELETE".into()),
+        ]
+    });
+    let event_names = ["INSERT", "UPDATE", "DELETE"];
+    rsx! {
+        div { class: "workflow-http-trigger-editor",
+            section { class: "workflow-http-trigger-editor__overview",
+                div { class: "workflow-http-trigger-editor__icon", EditorIcon { name: "table", size: 28 } }
+                h2 { "Database Trigger" }
+                p { "Start this workflow when a row changes in the connected database." }
+                div { class: "workflow-http-trigger-editor__url-label", "CONNECTED DATABASE" }
+                code { class: "workflow-http-trigger-editor__url", "{backend}" }
+                p { class: "workflow-http-trigger-editor__muted", "Save and activate this workflow to install its database triggers." }
+            }
+            section { class: "workflow-http-trigger-editor__parameters",
+                header { class: "workflow-http-trigger-editor__tabs",
+                    button { class: "is-active", r#type: "button", "Parameters" }
+                    span { class: "workflow-http-trigger-editor__spacer" }
+                    button {
+                        class: "button button-primary",
+                        r#type: "button",
+                        disabled: table.is_empty() || listening,
+                        onclick: { let table = table.clone(); move |_| on_listen.call(table.clone()) },
+                        if listening { "Listening…" } else { "Listen for test event" }
+                    }
+                }
+                div { class: "workflow-http-trigger-editor__form-scroll",
+                    label { class: "field",
+                        span { "Node name" }
+                        input { value: "{name}", oninput: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["name"] = Value::String(event.value()); on_change.call(next); } } }
+                    }
+                    label { class: "field",
+                        span { "Table" }
+                        select {
+                            value: "{table}",
+                            onchange: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["table"] = Value::String(event.value()); on_change.call(next); } },
+                            option { value: "", "Select a table…" }
+                            if !table.is_empty() && !tables.iter().any(|candidate| candidate == &table) {
+                                option { value: "{table}", selected: true, "{table}" }
+                            }
+                            for candidate in tables.iter() {
+                                option { value: "{candidate}", selected: table == *candidate, "{candidate}" }
+                            }
+                        }
+                    }
+                    div { class: "workflow-http-trigger-editor__options-heading", strong { "Listen for" } }
+                    for operation in event_names {
+                        {
+                            let checked = events.iter().any(|event| event.as_str() == Some(operation));
+                            let trigger = trigger.clone();
+                            rsx! { label { class: "workflow-http-trigger-editor__toggle",
+                                input { r#type: "checkbox", checked, onchange: move |event| {
+                                    let mut next = trigger.clone();
+                                    let mut selected = next["events"].as_array().cloned().unwrap_or_default();
+                                    selected.retain(|item| item.as_str() != Some(operation));
+                                    if event.checked() { selected.push(Value::String(operation.to_string())); }
+                                    next["events"] = Value::Array(selected);
+                                    on_change.call(next);
+                                } }
+                                span { class: "workflow-http-trigger-editor__switch" }
+                                span { "{operation}" }
+                            } }
+                        }
+                    }
+                    aside { class: "workflow-http-trigger-editor__notice", "The event payload is available to workflow tasks as database.table, database.operation, database.old, and database.new." }
+                }
+            }
+            section { class: "workflow-http-trigger-editor__output",
+                p { class: "workflow-editor__eyebrow", "OUTPUT" }
+                if let Some(output) = event_output {
+                    pre { class: "workflow-logs__payload", "{output}" }
+                } else if listening {
+                    div { class: "workflow-http-trigger-editor__empty-output",
+                        EditorIcon { name: "zap", size: 22 }
+                        strong { "Waiting for a database change" }
+                        small { "Insert, update, or delete a row in {table}." }
+                    }
+                } else {
+                    div { class: "workflow-http-trigger-editor__empty-output",
+                        EditorIcon { name: "zap", size: 22 }
+                        strong { "No trigger output" }
+                        small { "Listen for a test event to preview the row-change payload." }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn HttpTriggerSettings(trigger: Value, on_change: EventHandler<Value>) -> Element {
     let mut tab = use_signal(|| "parameters".to_string());
     let method = trigger["method"].as_str().unwrap_or("GET").to_string();
@@ -1402,6 +1563,15 @@ fn create_http_trigger() -> Value {
             "notes": "",
             "display_note_in_flow": false
         }
+    })
+}
+
+fn create_database_trigger() -> Value {
+    json!({
+        "type": "database",
+        "name": "Database Trigger",
+        "table": "",
+        "events": ["INSERT", "UPDATE", "DELETE"]
     })
 }
 

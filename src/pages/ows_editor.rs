@@ -6,7 +6,10 @@ use ferris_workflow_editor::{
 use std::{cell::Cell, rc::Rc};
 
 use crate::pages::{
-    api::{execute_workflow, list_executions, validate_workflow},
+    api::{
+        execute_workflow, list_database_tables, list_executions, listen_database_event,
+        validate_workflow,
+    },
     models::ExecutionRecord,
 };
 
@@ -20,6 +23,9 @@ pub(crate) fn OwsEditor(
     let mut last_definition = use_signal(String::new);
     let mut execution = use_signal(WorkflowExecution::default);
     let mut execution_refresh = use_signal(|| 0_u64);
+    let database_tables = use_resource(list_database_tables);
+    let mut database_listening = use_signal(|| false);
+    let mut database_event = use_signal(|| None::<String>);
     let execution_history = use_resource(move || {
         let refresh = execution_refresh();
         async move {
@@ -118,6 +124,24 @@ pub(crate) fn OwsEditor(
         });
     };
 
+    let on_listen_database_event = move |table: String| {
+        database_listening.set(true);
+        database_event.set(None);
+        spawn(async move {
+            let result = listen_database_event(table).await;
+            database_event.set(Some(match result {
+                Ok(Some(event)) => {
+                    serde_json::to_string_pretty(&event).unwrap_or_else(|_| event.to_string())
+                }
+                Ok(None) => "No event received before the listen window expired.".into(),
+                Err(error) => format!("Could not listen for the database event: {error}"),
+            }));
+            database_listening.set(false);
+        });
+    };
+
+    let database_tables = database_tables().and_then(Result::ok).unwrap_or_default();
+
     let execution_history = match execution_history() {
         Some(Ok(rows)) => rows
             .into_iter()
@@ -141,6 +165,11 @@ pub(crate) fn OwsEditor(
             execution_history,
             initial_execution_id,
             notice,
+            database_backend: database_tables.backend,
+            database_tables: database_tables.tables,
+            database_listening: database_listening(),
+            database_event: database_event(),
+            on_listen_database_event,
         }
     }
 }

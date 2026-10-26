@@ -134,6 +134,7 @@ pub async fn create(
     let model = active_model.insert(&state.db).await.map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
     })?;
+    reconcile_database_triggers(&state).await?;
     debug!("Created workflow with id: {:?}", model.id);
     let resp: WorkflowResponse = model.into();
     Ok((StatusCode::CREATED, Json(resp)))
@@ -156,6 +157,7 @@ pub async fn update(
     let model = active_model.update(&state.db).await.map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
     })?;
+    reconcile_database_triggers(&state).await?;
     debug!("Successfully updated workflow with id: {}", item_id);
     let resp: WorkflowResponse = model.into();
     Ok(Json(resp))
@@ -170,6 +172,7 @@ pub async fn remove(
     model.into_active_model().delete(&state.db).await.map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
     })?;
+    reconcile_database_triggers(&state).await?;
     debug!("Successfully deleted workflow with id: {}", item_id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -303,6 +306,51 @@ pub async fn validate_ows(
     }
 }
 
+async fn reconcile_database_triggers(
+    state: &AppState,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    crate::db_triggers::reconcile(state).await.map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("could not configure database triggers: {error}")})),
+        )
+    })
+}
+
+pub async fn database_tables(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let (backend, tables) = crate::db_triggers::list_tables(&state.db).await.map_err(|error| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error})))
+    })?;
+    Ok(Json(serde_json::json!({ "backend": backend, "tables": tables })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListenForDatabaseEventRequest {
+    pub table: String,
+}
+
+pub async fn listen_for_database_event(
+    State(state): State<AppState>, Json(request): Json<ListenForDatabaseEventRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let (_, tables) = crate::db_triggers::list_tables(&state.db).await.map_err(|error| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error})))
+    })?;
+    if !tables.iter().any(|table| table == &request.table) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "select a table from the connected database"})),
+        ));
+    }
+    let event =
+        crate::db_triggers::listen_for_event(&state.db, &request.table).await.map_err(|error| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": error})))
+        })?;
+    let timeout = event.is_none();
+    Ok(Json(serde_json::json!({"event": event, "timeout": timeout})))
+}
+
 /// Executes an OWS workflow definition with the Open Workflow runtime.
 pub async fn execute_ows(
     State(state): State<AppState>, Json(request): Json<ExecuteRequest>,
@@ -412,7 +460,7 @@ async fn dispatch_http_trigger(
     .await
 }
 
-async fn run_ows(
+pub(crate) async fn run_ows(
     state: &AppState, request: ExecuteRequest,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let input = request.input.unwrap_or_else(|| serde_json::json!({}));
@@ -580,6 +628,8 @@ pub fn routes() -> axum::Router<AppState> {
     let router = axum::Router::new()
         .route("/api/workflows", get(list).post(create))
         .route("/api/workflows/validate", axum::routing::post(validate_ows))
+        .route("/api/database/tables", get(database_tables))
+        .route("/api/database/events/listen", axum::routing::post(listen_for_database_event))
         .route("/api/workflows/execute", axum::routing::post(execute_ows))
         .route("/api/executions", get(list_executions).post(execute_saved_workflow))
         .route("/api/workflows/{id}", get(read_one).put(update).delete(remove))

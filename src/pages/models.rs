@@ -13,6 +13,12 @@ pub(crate) struct Workflow {
     pub(crate) last_updated: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+pub(crate) struct DatabaseTables {
+    pub(crate) backend: String,
+    pub(crate) tables: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct WorkflowPayload {
     pub(super) active: bool,

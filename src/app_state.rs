@@ -17,6 +17,11 @@ impl AppState {
             use migration::MigratorTrait;
             migration::Migrator::up(&db, None).await.expect("seaorm migrations failed");
         }
-        Self { db }
+        let state = Self { db };
+        if let Err(error) = crate::db_triggers::reconcile(&state).await {
+            tracing::warn!(%error, "could not install configured database triggers");
+        }
+        crate::db_triggers::spawn_listener(state.clone());
+        state
     }
 }

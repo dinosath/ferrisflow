@@ -3,6 +3,8 @@ pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod controllers;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod db_triggers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod models {
     automod::dir!(pub "src/models");
 }

@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
-use super::models::{ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
+use super::models::{DatabaseTables, ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 struct ApiError {
@@ -108,6 +109,29 @@ pub(super) async fn list_executions() -> Result<Vec<ExecutionRecord>, String> {
     let response =
         reqwest::get(api_url("/api/executions")).await.map_err(|error| error.to_string())?;
     decode_response(response).await
+}
+
+pub(super) async fn list_database_tables() -> Result<DatabaseTables, String> {
+    let response =
+        reqwest::get(api_url("/api/database/tables")).await.map_err(|error| error.to_string())?;
+    decode_response(response).await
+}
+
+#[derive(Debug, Deserialize)]
+struct DatabaseListenResponse {
+    event: Option<Value>,
+    timeout: bool,
+}
+
+pub(super) async fn listen_database_event(table: String) -> Result<Option<Value>, String> {
+    let response = reqwest::Client::new()
+        .post(api_url("/api/database/events/listen"))
+        .json(&serde_json::json!({ "table": table }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let response: DatabaseListenResponse = decode_response(response).await?;
+    if response.timeout { Ok(None) } else { Ok(response.event) }
 }
 
 pub(crate) async fn execute_saved_workflow(

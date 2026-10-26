@@ -21,7 +21,10 @@ fn main() {
     dioxus::serve(|| async move {
         let state = ferris_workflow::app_state::AppState::new().await;
         let api = ferris_workflow::build_router(state);
-        Ok(dioxus::server::router(app).merge(api))
+        // The Dioxus router has its own fallback for rendering app routes.
+        // Keep it and merge only the API routes, otherwise Axum panics because
+        // both routers define a fallback.
+        Ok(dioxus::server::router(app).merge(api.reset_fallback()))
     });
 
     #[cfg(not(feature = "server"))]
