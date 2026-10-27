@@ -180,8 +180,8 @@
 
 .workflow-editor__inspector { position: absolute; z-index: 5; top: 16px; width: 280px; max-height: calc(100% - 32px); overflow: auto; border: 1px solid var(--editor-border); border-radius: 12px; background: #fff; box-shadow: 0 10px 32px #17203320; }
 .workflow-editor__inspector { right: 16px; padding: 16px; }
-.workflow-node-picker__overlay { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: #17203340; backdrop-filter: blur(2px); }
-.workflow-node-picker { width: min(520px, 100%); max-height: min(640px, 100%); overflow: auto; padding: 20px; border: 1px solid var(--editor-border); border-radius: 14px; background: #fff; box-shadow: 0 20px 60px #17203335; }
+.workflow-node-picker__overlay { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 24px; background: #17203340; backdrop-filter: blur(2px); }
+.workflow-node-picker { width: min(1200px, 90vw); height: min(880px, 90vh); max-height: none; overflow: auto; padding: 20px; border: 1px solid var(--editor-border); border-radius: 14px; background: #fff; box-shadow: 0 20px 60px #17203335; }
 .workflow-node-picker__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
 .workflow-node-picker__header h2 { margin: 0; color: var(--editor-ink); font-size: 18px; font-weight: 650; }
 .workflow-node-picker__header p:last-child { margin: 5px 0 0; color: var(--editor-muted); font-size: 12px; }
@@ -283,8 +283,8 @@
   .workflow-form__name { max-width: none; }
   .workflow-editor__canvas { padding-right: 52px; padding-left: 52px; }
   .workflow-editor__inspector { top: auto; right: 8px; bottom: 42px; left: 8px; width: auto; max-height: 65%; }
-  .workflow-node-picker__overlay { padding: 12px; }
-  .workflow-node-picker { max-height: 90%; padding: 16px; }
+  .workflow-node-picker__overlay { padding: 8px; }
+  .workflow-node-picker { width: calc(100vw - 16px); height: calc(100vh - 16px); padding: 16px; }
   .workflow-node-picker__list { grid-template-columns: 1fr; }
   .workflow-editor__zoom-controls { bottom: 42px; }
   .workflow-editor__execute-group { bottom: 42px; }
