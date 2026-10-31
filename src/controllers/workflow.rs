@@ -358,9 +358,8 @@ pub async fn execute_ows(
     run_ows(&state, request).await
 }
 
-/// Dispatch an unmatched HTTP request to an active workflow whose
-/// `document.metadata.triggers` binding declares the same method and path.
-async fn dispatch_http_trigger(
+/// Dispatch configured REST exposure routes to their saved workflow.
+async fn dispatch_rest_api(
     State(state): State<AppState>, request: Request<Body>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let method = request.method().as_str().to_ascii_uppercase();
@@ -402,23 +401,16 @@ async fn dispatch_http_trigger(
         .filter_map(|workflow| {
             let definition =
                 serde_json::from_str::<serde_json::Value>(&workflow.definition_json).ok()?;
-            let trigger_matches = definition
-                .get("document")
-                .and_then(|document| document.get("metadata"))
-                .and_then(|metadata| metadata.get("triggers"))
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|triggers| {
-                    triggers.iter().any(|trigger| {
-                        trigger.get("type").and_then(serde_json::Value::as_str) == Some("http")
-                            && trigger
-                                .get("method")
-                                .and_then(serde_json::Value::as_str)
-                                .is_some_and(|value| value.eq_ignore_ascii_case(&method))
-                            && trigger.get("path").and_then(serde_json::Value::as_str)
-                                == Some(path.as_str())
-                    })
-                });
-            trigger_matches.then_some(workflow)
+            let exposure = definition.get("document")?.get("metadata")?.get("rest_api")?;
+            let enabled =
+                exposure.get("enabled").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let method_matches = exposure
+                .get("method")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value.eq_ignore_ascii_case(&method));
+            let path_matches =
+                exposure.get("path").and_then(serde_json::Value::as_str) == Some(path.as_str());
+            (enabled && method_matches && path_matches).then_some(workflow)
         })
         .collect::<Vec<_>>();
 
@@ -426,7 +418,7 @@ async fn dispatch_http_trigger(
         [] => {
             return Err((
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "no active workflow matches this HTTP trigger"})),
+                Json(serde_json::json!({"error": "no active workflow exposes this REST route"})),
             ));
         }
         [workflow] => workflow,
@@ -434,30 +426,17 @@ async fn dispatch_http_trigger(
             return Err((
                 StatusCode::CONFLICT,
                 Json(
-                    serde_json::json!({"error": "multiple active workflows match this HTTP trigger"}),
+                    serde_json::json!({"error": "multiple active workflows expose this REST route"}),
                 ),
             ));
         }
     };
-
-    run_ows(
-        &state,
-        ExecuteRequest {
-            definition_json: workflow.definition_json.clone(),
-            input: Some(serde_json::json!({
-                "request": {
-                    "method": method,
-                    "path": path,
-                    "query": query,
-                    "headers": headers,
-                    "body": body
-                }
-            })),
-            workflow_id: Some(workflow.id),
-            workflow_name: Some(workflow.name.clone()),
-        },
-    )
-    .await
+    run_ows(&state, ExecuteRequest {
+        definition_json: workflow.definition_json.clone(),
+        input: Some(serde_json::json!({"request": {"method": method, "path": path, "query": query, "headers": headers, "body": body}})),
+        workflow_id: Some(workflow.id),
+        workflow_name: Some(workflow.name.clone()),
+    }).await
 }
 
 pub(crate) async fn run_ows(
@@ -633,7 +612,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/api/workflows/execute", axum::routing::post(execute_ows))
         .route("/api/executions", get(list_executions).post(execute_saved_workflow))
         .route("/api/workflows/{id}", get(read_one).put(update).delete(remove))
-        .fallback(dispatch_http_trigger);
+        .fallback(dispatch_rest_api);
 
     router
 }

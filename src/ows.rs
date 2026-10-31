@@ -14,12 +14,14 @@ use serverless_workflow_core::models::workflow::WorkflowDefinition;
 pub fn parse_ows_document(raw: &str) -> Result<WorkflowDefinition, String> {
     let value = parse_ows_value(raw)?;
 
-    let definition_value = value
+    let mut definition_value = value
         .get("definition")
         .filter(|_| value.get("document").is_none())
         .cloned()
         .unwrap_or(value);
-    validate_http_triggers(http_triggers(&definition_value))?;
+    migrate_http_exposure(&mut definition_value);
+    validate_database_triggers(http_triggers(&definition_value))?;
+    validate_rest_api(&definition_value)?;
 
     let definition_json = serde_json::to_string(&definition_value)
         .map_err(|error| format!("could not read OWS definition: {error}"))?;
@@ -44,7 +46,14 @@ pub fn parse_ows_document(raw: &str) -> Result<WorkflowDefinition, String> {
 
 /// Validate a definition and return its normalized canonical JSON string.
 pub fn normalize_ows_json(raw: &str) -> Result<String, String> {
-    let original = parse_ows_value(raw)?;
+    let mut original = parse_ows_value(raw)?;
+    if original.get("document").is_none() {
+        if let Some(source) = original.get_mut("definition") {
+            migrate_http_exposure(source);
+        }
+    } else {
+        migrate_http_exposure(&mut original);
+    }
     let definition = parse_ows_document(raw)?;
     let mut normalized = serde_json::to_value(definition)
         .map_err(|error| format!("could not serialize OWS definition: {error}"))?;
@@ -55,8 +64,6 @@ pub fn normalize_ows_json(raw: &str) -> Result<String, String> {
     if let Some(metadata) = source.get("document").and_then(|document| document.get("metadata")) {
         normalized["document"]["metadata"] = metadata.clone();
     }
-    // Migrate documents created before the trigger binding was moved into OWS
-    // document metadata. The canonical representation is `document.metadata.triggers`.
     serde_json::to_string_pretty(&normalized)
         .map_err(|error| format!("could not serialize OWS definition: {error}"))
 }
@@ -74,56 +81,122 @@ fn parse_ows_value(raw: &str) -> Result<Value, String> {
         .map_err(|error| format!("definition_json is not valid JSON or YAML: {error}"))
 }
 
-fn validate_http_triggers(triggers: Option<&Value>) -> Result<(), String> {
+fn migrate_http_exposure(document: &mut Value) {
+    let Some(metadata) = document
+        .get_mut("document")
+        .and_then(|document| document.get_mut("metadata"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(triggers) = metadata.get("triggers").and_then(Value::as_array).cloned() else {
+        return;
+    };
+    let http_trigger = triggers
+        .iter()
+        .find(|trigger| trigger.get("type").and_then(Value::as_str) == Some("http"))
+        .cloned();
+    if metadata.get("rest_api").is_none() {
+        if let Some(trigger) = http_trigger {
+            metadata.insert(
+                "rest_api".into(),
+                serde_json::json!({
+                    "enabled": true,
+                    "method": trigger.get("method").and_then(Value::as_str).unwrap_or("POST"),
+                    "path": trigger.get("path").and_then(Value::as_str).unwrap_or("/")
+                }),
+            );
+        }
+    }
+    let remaining = triggers
+        .iter()
+        .filter(|trigger| trigger.get("type").and_then(Value::as_str) != Some("http"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if remaining.is_empty() {
+        metadata.remove("triggers");
+    } else {
+        metadata.insert("triggers".into(), Value::Array(remaining));
+    }
+}
+
+fn validate_database_triggers(triggers: Option<&Value>) -> Result<(), String> {
     let Some(triggers) = triggers else {
         return Ok(());
     };
     let triggers = triggers
         .as_array()
         .ok_or_else(|| "document.metadata.triggers must be an array".to_string())?;
-    let mut routes = std::collections::HashSet::new();
     for (index, trigger) in triggers.iter().enumerate() {
-        if trigger.get("type").and_then(Value::as_str) != Some("http") {
-            return Err(format!("document.metadata.triggers/{index}/type must be http"));
+        match trigger.get("type").and_then(Value::as_str) {
+            Some("database") => {
+                validate_database_trigger(trigger, index)?;
+                continue;
+            }
+            _ => {
+                return Err(format!("document.metadata.triggers/{index}/type must be database"));
+            }
         }
-        if trigger
-            .get("authentication")
-            .and_then(Value::as_str)
-            .is_some_and(|authentication| authentication != "none")
+    }
+    Ok(())
+}
+
+fn validate_rest_api(document: &Value) -> Result<(), String> {
+    let Some(exposure) = document
+        .get("document")
+        .and_then(|document| document.get("metadata"))
+        .and_then(|metadata| metadata.get("rest_api"))
+    else {
+        return Ok(());
+    };
+    if !exposure.is_object() {
+        return Err("document.metadata.rest_api must be an object".into());
+    }
+    if !exposure.get("enabled").is_some_and(Value::is_boolean) {
+        return Err("document.metadata.rest_api/enabled must be a boolean".into());
+    }
+    let method = exposure
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "document.metadata.rest_api/method is required".to_string())?;
+    if !["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+        .contains(&method.to_ascii_uppercase().as_str())
+    {
+        return Err("document.metadata.rest_api/method is not a supported HTTP method".into());
+    }
+    let path = exposure
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "document.metadata.rest_api/path is required".to_string())?;
+    if !path.starts_with('/') || path.starts_with("//") || path.contains('?') || path.contains('#')
+    {
+        return Err(
+            "document.metadata.rest_api/path must be an absolute path without query or fragment"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_database_trigger(trigger: &Value, index: usize) -> Result<(), String> {
+    let prefix = format!("document.metadata.triggers/{index}");
+    if !trigger.get("table").and_then(Value::as_str).is_some_and(|table| !table.trim().is_empty()) {
+        return Err(format!("{prefix}/table is required"));
+    }
+    let events = trigger
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{prefix}/events must be an array"))?;
+    if events.is_empty() {
+        return Err(format!("{prefix}/events must include at least one database operation"));
+    }
+    for event in events {
+        let operation = event.as_str().unwrap_or_default();
+        if !["INSERT", "UPDATE", "DELETE"]
+            .iter()
+            .any(|supported| operation.eq_ignore_ascii_case(supported))
         {
-            return Err(format!(
-                "document.metadata.triggers/{index}/authentication is not supported yet"
-            ));
-        }
-        let method = trigger
-            .get("method")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("document.metadata.triggers/{index}/method is required"))?;
-        if !["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-            .contains(&method.to_ascii_uppercase().as_str())
-        {
-            return Err(format!(
-                "document.metadata.triggers/{index}/method is not a supported HTTP method"
-            ));
-        }
-        let path = trigger
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("document.metadata.triggers/{index}/path is required"))?;
-        if !path.starts_with('/')
-            || path.starts_with("//")
-            || path.contains('?')
-            || path.contains('#')
-        {
-            return Err(format!(
-                "document.metadata.triggers/{index}/path must be an absolute path without query or fragment"
-            ));
-        }
-        let route = (method.to_ascii_uppercase(), path.to_owned());
-        if !routes.insert(route) {
-            return Err(format!(
-                "document.metadata.triggers/{index} duplicates an HTTP method and path"
-            ));
+            return Err(format!("{prefix}/events contains an unsupported database operation"));
         }
     }
     Ok(())

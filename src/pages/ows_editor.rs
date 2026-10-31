@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use ferris_workflow_editor::{
-    ValidationState, WorkflowEditor, WorkflowExecution, WorkflowExecutionRecord,
+    ValidationState, WorkflowChatMessage, WorkflowEditor, WorkflowExecution, WorkflowExecutionRecord,
     WorkflowExecutionStep,
 };
 use std::{cell::Cell, rc::Rc};
@@ -18,7 +18,9 @@ pub(crate) fn OwsEditor(
     definition: String, on_change: EventHandler<String>,
     on_validation: EventHandler<ValidationState>, validation: ValidationState,
     notice: Option<String>, workflow_id: Option<i32>, workflow_name: String,
-    initial_execution_id: Option<String>,
+    initial_execution_id: Option<String>, on_open_settings: EventHandler<()>,
+    ai_messages: Vec<WorkflowChatMessage>, ai_busy: bool,
+    on_ai_chat: EventHandler<String>, on_ai_apply: EventHandler<String>,
 ) -> Element {
     let mut last_definition = use_signal(String::new);
     let mut execution = use_signal(WorkflowExecution::default);
@@ -170,6 +172,11 @@ pub(crate) fn OwsEditor(
             database_listening: database_listening(),
             database_event: database_event(),
             on_listen_database_event,
+            on_open_settings,
+            ai_messages,
+            ai_busy,
+            on_ai_chat,
+            on_ai_apply,
         }
     }
 }

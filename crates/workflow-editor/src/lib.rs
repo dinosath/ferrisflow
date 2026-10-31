@@ -4,7 +4,7 @@ use dioxus_icons::lucide::{
     chevron_up::ChevronUp, clock::Clock, ellipsis::Ellipsis, file::File,
     file_pen_line::FilePenLine, git_branch::GitBranch, layout_dashboard::LayoutDashboard,
     list::List, maximize::Maximize, panel_right::PanelRight, play::Play, plus::Plus, power::Power,
-    radio::Radio, repeat::Repeat, search::Search, shield_alert::ShieldAlert, sparkles::Sparkles,
+    radio::Radio, repeat::Repeat, search::Search, settings::Settings, shield_alert::ShieldAlert, sparkles::Sparkles,
     table::Table, trash_2::Trash2, wand::Wand, workflow::Workflow, x::X, zap::Zap, zoom_in::ZoomIn,
     zoom_out::ZoomOut,
 };
@@ -54,6 +54,13 @@ pub struct WorkflowExecutionRecord {
     pub steps: Vec<WorkflowExecutionStep>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkflowChatMessage {
+    pub role: String,
+    pub content: String,
+    pub definition_json: Option<String>,
+}
+
 #[component]
 pub fn WorkflowEditor(
     definition: String, on_change: EventHandler<String>, on_validate: EventHandler<String>,
@@ -62,7 +69,9 @@ pub fn WorkflowEditor(
     #[props(default)] initial_execution_id: Option<String>,
     #[props(default)] database_backend: String, #[props(default)] database_tables: Vec<String>,
     #[props(default)] database_listening: bool, #[props(default)] database_event: Option<String>,
-    on_listen_database_event: EventHandler<String>,
+    on_listen_database_event: EventHandler<String>, on_open_settings: EventHandler<()>,
+    ai_messages: Vec<WorkflowChatMessage>, ai_busy: bool,
+    on_ai_chat: EventHandler<String>, on_ai_apply: EventHandler<String>,
 ) -> Element {
     let mut selected_index = use_signal(|| 0_usize);
     let mut inspector_open = use_signal(|| false);
@@ -103,6 +112,8 @@ pub fn WorkflowEditor(
     let mut task_draft = use_signal(|| "{}".to_string());
     let mut edit_error = use_signal(|| None::<String>);
     let mut selected_trigger_index = use_signal(|| None::<usize>);
+    let mut notification_dismissed = use_signal(|| false);
+    let mut last_notification = use_signal(String::new);
 
     let document = parse_document(&definition).unwrap_or_else(|_| starter_document());
     let selected_execution = execution_history
@@ -115,6 +126,8 @@ pub fn WorkflowEditor(
     let tasks = document["do"].as_array().cloned().unwrap_or_default();
     let triggers =
         document["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
+    let has_visible_nodes =
+        tasks.iter().any(task_kind_is_supported) || triggers.iter().any(trigger_kind_is_supported);
     let content_width = (1000.0_f64).max(500.0 + tasks.len() as f64 * 230.0);
     let default_start_x =
         (content_width - (132.0 + tasks.len().saturating_sub(1) as f64 * 230.0)) / 2.0;
@@ -127,12 +140,16 @@ pub fn WorkflowEditor(
         .last()
         .map(|(x, y)| (x + 230.0, *y))
         .unwrap_or((content_width / 2.0 - 66.0, content_height / 2.0 - 48.0));
+    let first_visible_task_position = tasks
+        .iter()
+        .enumerate()
+        .find(|(_, task)| task_kind_is_supported(task))
+        .and_then(|(index, _)| positions.get(index).copied());
     let trigger_positions = triggers
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            positions
-                .first()
+            first_visible_task_position
                 .map(|position| (position.0 - 230.0, position.1 + index as f64 * 150.0))
                 .unwrap_or((
                     content_width / 2.0 - 296.0,
@@ -140,7 +157,18 @@ pub fn WorkflowEditor(
                 ))
         })
         .collect::<Vec<_>>();
-    let connections = read_canvas_connections(&document, &tasks);
+    let visible_task_names = tasks
+        .iter()
+        .filter(|task| task_kind_is_supported(task))
+        .filter_map(task_name)
+        .collect::<std::collections::HashSet<_>>();
+    let connections = read_canvas_connections(&document, &tasks)
+        .into_iter()
+        .filter(|(from, to)| {
+            let (source, _) = split_connection_source(from);
+            visible_task_names.contains(source) && visible_task_names.contains(to)
+        })
+        .collect::<Vec<_>>();
     let mut edge_paths = Vec::with_capacity(connections.len() + 1);
     let mut connection_controls = Vec::with_capacity(connections.len());
     for (edge_index, (from, to)) in connections.iter().enumerate() {
@@ -204,13 +232,13 @@ pub fn WorkflowEditor(
     let selected_trigger = selected_trigger_index().and_then(|index| triggers.get(index).cloned());
     let selected_name = selected_trigger
         .as_ref()
-        .map(|trigger| trigger["name"].as_str().unwrap_or("HTTP Trigger").to_string())
+        .map(|trigger| trigger["name"].as_str().unwrap_or("Database Trigger").to_string())
         .or_else(|| selected_task.as_ref().and_then(task_name))
         .unwrap_or_default();
     let selected_definition =
         selected_task.as_ref().and_then(task_definition).unwrap_or_else(|| json!({}));
     let selected_type = if let Some(trigger) = selected_trigger.as_ref() {
-        trigger["type"].as_str().unwrap_or("http")
+        trigger["type"].as_str().unwrap_or("database")
     } else {
         selected_definition
             .as_object()
@@ -225,11 +253,50 @@ pub fn WorkflowEditor(
         .iter()
         .flat_map(|error| error.split("; "))
         .map(str::trim)
-        .filter(|error| {
-            !error.is_empty() && *error != "/do: workflow must define at least one task"
-        })
-        .map(str::to_string)
+        .filter(|error| !error.is_empty())
+        .map(format_validation_error)
         .collect::<Vec<_>>();
+    let selected_node_validation_errors = if let Some(trigger_index) = selected_trigger_index() {
+        visible_validation_errors
+            .iter()
+            .filter(|error| error.contains(&format!("document.metadata.triggers/{trigger_index}")))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else if selected_task.is_some() {
+        visible_validation_errors
+            .iter()
+            .filter(|error| {
+                error.contains(&format!("/do/{selected}/"))
+                    || error.contains(&format!("/do/{selected}:"))
+                    || error.contains("definition is not valid OWS: parse error")
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let workflow_validation_errors = visible_validation_errors
+        .iter()
+        .filter(|error| !selected_node_validation_errors.contains(error))
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_node_open =
+        inspector_open() && (selected_task.is_some() || selected_trigger.is_some());
+    let validation_belongs_to_selected_node =
+        selected_node_open && (validation.checking || !visible_validation_errors.is_empty());
+    let selected_node_validation_blocked =
+        selected_node_open && (validation.checking || !selected_node_validation_errors.is_empty());
+    let notification_key = format!(
+        "{}|{}",
+        notice.as_deref().unwrap_or_default(),
+        visible_validation_errors.join("|")
+    );
+    use_effect(move || {
+        if last_notification() != notification_key {
+            last_notification.set(notification_key.clone());
+            notification_dismissed.set(false);
+        }
+    });
     let editor_execution_records = if execution.running
         || execution.execution_id.is_some()
         || execution.error.is_some()
@@ -359,31 +426,6 @@ pub fn WorkflowEditor(
                                 }
                                 div { class: "workflow-node-picker__list",
                                     p { class: "workflow-editor__eyebrow workflow-node-picker__group-label", "TRIGGERS" }
-                                    button {
-                                        class: "workflow-editor__palette-item",
-                                        r#type: "button",
-                                        onclick: {
-                                            let mut next = document.clone();
-                                            move |_| {
-                                                    let mut next_triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
-                                                let index = next_triggers.len();
-                                                next_triggers.push(create_http_trigger());
-                                                    if !next["document"]["metadata"].is_object() { next["document"]["metadata"] = json!({}); }
-                                                    next["document"]["metadata"]["triggers"] = Value::Array(next_triggers);
-                                                    selected_index.set(0);
-                                                selected_trigger_index.set(Some(index));
-                                                inspector_open.set(true);
-                                                palette_open.set(false);
-                                                on_change.call(format_json(&next));
-                                            }
-                                        },
-                                        span { class: "workflow-editor__palette-icon", EditorIcon { name: "radio", size: 18 } }
-                                        span { class: "workflow-node-picker__copy",
-                                            strong { "HTTP Trigger" }
-                                            small { "Start a workflow from an HTTP request" }
-                                        }
-                                        span { class: "workflow-editor__palette-chevron", EditorIcon { name: "arrow-up-right", size: 14 } }
-                                    }
                                     button {
                                         class: "workflow-editor__palette-item",
                                         r#type: "button",
@@ -598,10 +640,18 @@ pub fn WorkflowEditor(
                             div {
                                 class: "workflow-editor__canvas-content",
                                 style: "width: {content_width}px; height: {content_height}px; transform: translate(calc(-50% + {canvas_pan().0}px), calc(-50% + {canvas_pan().1}px)) scale({zoom_percent() as f64 / 100.0});",
-                                if tasks.is_empty() {
+                                if !has_visible_nodes || (editor_tab() == "editor" && tasks.is_empty()) {
                                     div { class: "workflow-editor__canvas-empty-state",
-                                        strong { if editor_tab() == "executions" { "No workflow steps" } else { "Start with a task" } }
-                                        span { if editor_tab() == "executions" { "This workflow does not contain any executable steps." } else { "OWS workflows begin with their first declared task." } }
+                                        strong {
+                                            if editor_tab() == "executions" { "No workflow steps" }
+                                            else if triggers.is_empty() { "Start with a task" }
+                                            else { "Add a task to continue" }
+                                        }
+                                        span {
+                                            if editor_tab() == "executions" { "This workflow does not contain any executable steps." }
+                                            else if triggers.is_empty() { "OWS workflows begin with their first declared task." }
+                                            else { "A trigger starts the workflow, but it needs a task to run." }
+                                        }
                                         if editor_tab() == "editor" {
                                             button {
                                                 class: "button button-primary",
@@ -614,12 +664,14 @@ pub fn WorkflowEditor(
                                     }
                                 }
                                 svg { class: "workflow-editor__edges", width: "{content_width}", height: "{content_height}",
-                                    if let Some(first_task_position) = positions.first() {
+                                    if let Some(first_task_position) = first_visible_task_position {
                                         for (trigger_index, trigger_position) in trigger_positions.iter().enumerate() {
-                                            path {
-                                                key: "trigger-edge-{trigger_index}",
-                                                class: "workflow-editor__edge workflow-editor__edge--trigger",
-                                                d: "{connector_path(*trigger_position, *first_task_position)}"
+                                            if trigger_kind_is_supported(&triggers[trigger_index]) {
+                                                path {
+                                                    key: "trigger-edge-{trigger_index}",
+                                                    class: "workflow-editor__edge workflow-editor__edge--trigger",
+                                                    d: "{connector_path(*trigger_position, first_task_position)}"
+                                                }
                                             }
                                         }
                                     }
@@ -669,7 +721,7 @@ pub fn WorkflowEditor(
                                     }
                                 }
                                 }
-                                for (trigger_index, trigger) in triggers.iter().enumerate() {
+                                for (trigger_index, trigger) in triggers.iter().enumerate().filter(|(_, trigger)| trigger_kind_is_supported(trigger)) {
                                     {
                                         let position = trigger_positions[trigger_index];
                                         let is_database_trigger = trigger["type"].as_str() == Some("database");
@@ -712,14 +764,14 @@ pub fn WorkflowEditor(
                                                 }
                                                 span { class: "workflow-node__port workflow-node__port--out", title: "Trigger output" }
                                                 div { class: "workflow-node-label",
-                                                    strong { "{trigger[\"name\"].as_str().unwrap_or(\"HTTP Trigger\")}" }
+                                                    strong { "{trigger[\"name\"].as_str().unwrap_or(\"Database Trigger\")}" }
                                                     small { "{method} · {path}" }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                for (index, task) in tasks.iter().enumerate() {
+                                for (index, task) in tasks.iter().enumerate().filter(|(_, task)| task_kind_is_supported(task)) {
                                     {
                                         let name = task_name(task).unwrap_or_else(|| "Unnamed task".into());
                                         let kind = task_definition(task)
@@ -739,7 +791,18 @@ pub fn WorkflowEditor(
                                             div { class: if editor_tab() == "executions" { "workflow-node-group workflow-node-group--canvas workflow-node-group--readonly" } else { "workflow-node-group workflow-node-group--canvas" }, style: "left: {position.0}px; top: {position.1}px;",
                                                 if editor_tab() == "editor" {
                                                 div { class: "workflow-node-actions",
-                                                        button { class: "workflow-editor__node-action", title: "Validate workflow", aria_label: "Validate workflow", r#type: "button", onclick: { let current = definition.clone(); move |_| on_validate.call(current.clone()) }, EditorIcon { name: "play", size: 14 } }
+                                                        button { class: "workflow-editor__node-action", title: "Validate workflow", aria_label: "Validate workflow", r#type: "button", onclick: {
+                                                            let current = definition.clone();
+                                                            let value = task_value.clone();
+                                                            move |_| {
+                                                                selected_index.set(index);
+                                                                selected_trigger_index.set(None);
+                                                                inspector_open.set(true);
+                                                                task_draft.set(format_json(&value));
+                                                                edit_error.set(None);
+                                                                on_validate.call(current.clone());
+                                                            }
+                                                        }, EditorIcon { name: "play", size: 14 } }
                                                         button { class: if disabled { "workflow-editor__node-action is-muted" } else { "workflow-editor__node-action" }, title: if disabled { "Activate node" } else { "Deactivate node" }, aria_label: if disabled { "Activate node" } else { "Deactivate node" }, r#type: "button", onclick: {
                                                             let mut next = document.clone();
                                                             let node_name = name.clone();
@@ -763,7 +826,7 @@ pub fn WorkflowEditor(
                                                                 on_change.call(format_json(&next));
                                                             }
                                                         }, EditorIcon { name: "trash", size: 15 } }
-                                                        button { class: "workflow-editor__node-action workflow-editor__node-action--accent", title: "Workflow help", aria_label: "Workflow help", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), EditorIcon { name: "sparkles", size: 15 } }
+                                                        button { class: "workflow-editor__node-action workflow-editor__node-action--accent", title: "Open AI workflow assistant", aria_label: "Open AI workflow assistant", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), EditorIcon { name: "sparkles", size: 15 } }
                                                         button { class: "workflow-editor__node-action", title: "More node options", aria_label: "More node options", aria_expanded: more_menu_index() == Some(index), r#type: "button", onclick: move |_| more_menu_index.set(if more_menu_index() == Some(index) { None } else { Some(index) }), EditorIcon { name: "ellipsis", size: 15 } }
                                                         if more_menu_index() == Some(index) {
                                                             div { class: "workflow-node-more-menu",
@@ -942,7 +1005,8 @@ pub fn WorkflowEditor(
                                     if inspector_open() { inspector_open.set(false); }
                                     else { inspector_open.set(true); }
                                 }, EditorIcon { name: "panel", size: 17 } }
-                                button { class: "workflow-editor__tool-button workflow-editor__tool-button--accent", title: "Workflow help", aria_label: "Workflow help", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), EditorIcon { name: "sparkles", size: 17 } }
+                                button { class: "workflow-editor__tool-button workflow-editor__tool-button--accent", title: "Open AI workflow assistant", aria_label: "Open AI workflow assistant", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), EditorIcon { name: "sparkles", size: 17 } }
+                                button { class: "workflow-editor__tool-button", title: "Workflow settings", aria_label: "Workflow settings", r#type: "button", onclick: move |_| on_open_settings.call(()), EditorIcon { name: "settings", size: 17 } }
                             }
                         }
                         if editor_tab() == "editor" || editor_tab() == "executions" {
@@ -960,13 +1024,12 @@ pub fn WorkflowEditor(
                             }
                         }
                         if editor_tab() == "editor" && assistant_open() {
-                            aside { class: "workflow-editor__assistant",
-                                div { class: "workflow-editor__assistant-heading",
-                                    strong { "Workflow help" }
-                                    button { class: "workflow-editor__icon-action", title: "Close workflow help", aria_label: "Close workflow help", r#type: "button", onclick: move |_| assistant_open.set(false), EditorIcon { name: "x", size: 16 } }
-                                }
-                                p { "Drag nodes to reposition them and drag the blank canvas to pan. Use Ctrl/⌘ + wheel or pinch to zoom, +/− to zoom, 0 to reset, and 1 to fit." }
-                                button { class: "button button-quiet", r#type: "button", onclick: move |_| { assistant_open.set(false); palette_open.set(true); }, EditorIcon { name: "plus", size: 14 } "Add a step" }
+                            WorkflowChatOverlay {
+                                messages: ai_messages.clone(),
+                                busy: ai_busy,
+                                on_send: on_ai_chat,
+                                on_apply: on_ai_apply,
+                                on_close: move |_| assistant_open.set(false),
                             }
                         }
                         if editor_tab() == "editor" {
@@ -1079,7 +1142,31 @@ pub fn WorkflowEditor(
                                         EditorIcon { name: "trash", size: 16 }
                                     }
                                 }
-                                button { class: "workflow-editor__icon-action", title: "Close node settings", aria_label: "Close node settings", r#type: "button", onclick: move |_| inspector_open.set(false), EditorIcon { name: "x", size: 16 } }
+                                button {
+                                    class: "workflow-editor__icon-action",
+                                    title: if selected_node_validation_blocked { "Resolve validation issues before closing" } else { "Close node settings" },
+                                    aria_label: if selected_node_validation_blocked { "Resolve validation issues before closing" } else { "Close node settings" },
+                                    disabled: selected_node_validation_blocked,
+                                    r#type: "button",
+                                    onclick: move |_| inspector_open.set(false),
+                                    EditorIcon { name: "x", size: 16 }
+                                }
+                            }
+                        }
+                        if selected_node_validation_blocked {
+                            if selected_trigger.is_some() {
+                            div { class: "workflow-node-validation-error", role: "alert",
+                                strong { if validation.checking { "Validating this node…" } else { "Fix this node before closing." } }
+                                if !selected_node_validation_errors.is_empty() {
+                                    ul { for (index, error) in selected_node_validation_errors.iter().enumerate() { li { key: "node-validation-{index}", "{error}" } } }
+                                }
+                            }
+                            }
+                        }
+                        if selected_node_open && !workflow_validation_errors.is_empty() {
+                            div { class: "workflow-node-validation-error workflow-node-validation-error--workflow", role: "alert",
+                                strong { "Workflow issue" }
+                                ul { for (index, error) in workflow_validation_errors.iter().enumerate() { li { key: "workflow-validation-{index}", "{error}" } } }
                             }
                         }
                         if let Some(trigger) = selected_trigger.clone() {
@@ -1091,23 +1178,6 @@ pub fn WorkflowEditor(
                                     listening: database_listening,
                                     event_output: database_event.clone(),
                                     on_listen: on_listen_database_event,
-                                    on_change: {
-                                        let mut next = document.clone();
-                                        move |updated: Value| {
-                                            if let Some(index) = selected_trigger_index() {
-                                                let mut triggers = next["document"]["metadata"]["triggers"].as_array().cloned().unwrap_or_default();
-                                                if index < triggers.len() {
-                                                    triggers[index] = updated;
-                                                    next["document"]["metadata"]["triggers"] = Value::Array(triggers);
-                                                    on_change.call(format_json(&next));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                HttpTriggerSettings {
-                                    trigger,
                                     on_change: {
                                         let mut next = document.clone();
                                         move |updated: Value| {
@@ -1192,6 +1262,14 @@ pub fn WorkflowEditor(
                                                 }
                                             }
                                         }
+                                        if selected_node_validation_blocked {
+                                            div { class: "workflow-node-validation-error workflow-node-validation-error--field", role: "alert",
+                                                strong { if validation.checking { "Validating this node…" } else { "Fix this field to continue." } }
+                                                if !selected_node_validation_errors.is_empty() {
+                                                    ul { for (index, error) in selected_node_validation_errors.iter().enumerate() { li { key: "call-validation-{index}", "{error}" } } }
+                                                }
+                                            }
+                                        }
                                     }
                                     if let Some(inputs) = selected_definition["with"].as_object() {
                                         div { class: "workflow-editor__call-inputs",
@@ -1254,6 +1332,14 @@ pub fn WorkflowEditor(
                                         spellcheck: "false",
                                         oninput: move |event| task_draft.set(event.value()),
                                     }
+                                    if selected_node_validation_blocked {
+                                        div { class: "workflow-node-validation-error workflow-node-validation-error--field", role: "alert",
+                                            strong { if validation.checking { "Validating this node…" } else { "Fix this definition to continue." } }
+                                            if !selected_node_validation_errors.is_empty() {
+                                                ul { for (index, error) in selected_node_validation_errors.iter().enumerate() { li { key: "definition-validation-{index}", "{error}" } } }
+                                            }
+                                        }
+                                    }
                                     button {
                                         class: "button button-primary",
                                         r#type: "button",
@@ -1284,15 +1370,25 @@ pub fn WorkflowEditor(
                 }
             }
 
-            if notice.is_some() || !visible_validation_errors.is_empty() {
+            if !notification_dismissed()
+                && (notice.is_some() || (!validation_belongs_to_selected_node && !workflow_validation_errors.is_empty())) {
                 div { class: "workflow-editor__notification workflow-editor__notification--error", role: "alert",
+                    div { class: "workflow-editor__notification-heading",
+                        strong { if notice.is_some() { "Workflow issue" } else { "Validation issues" } }
+                        button {
+                            class: "workflow-editor__notification-close",
+                            r#type: "button",
+                            title: "Dismiss notification",
+                            aria_label: "Dismiss notification",
+                            onclick: move |_| notification_dismissed.set(true),
+                            EditorIcon { name: "x", size: 14 }
+                        }
+                    }
                     if let Some(message) = notice.as_ref() {
-                        strong { "Workflow issue" }
                         p { "{message}" }
                     }
-                    if !visible_validation_errors.is_empty() {
-                        strong { "Validation issues" }
-                        ul { for (index, error) in visible_validation_errors.iter().enumerate() { li { key: "{index}", "{error}" } } }
+                    if !validation_belongs_to_selected_node && !workflow_validation_errors.is_empty() {
+                        ul { for (index, error) in workflow_validation_errors.iter().enumerate() { li { key: "{index}", "{error}" } } }
                     }
                 }
             }
@@ -1398,172 +1494,6 @@ fn DatabaseTriggerSettings(
             }
         }
     }
-}
-
-#[component]
-fn HttpTriggerSettings(trigger: Value, on_change: EventHandler<Value>) -> Element {
-    let mut tab = use_signal(|| "parameters".to_string());
-    let method = trigger["method"].as_str().unwrap_or("GET").to_string();
-    let path = trigger["path"].as_str().unwrap_or("/").to_string();
-    let trigger_name = trigger["name"].as_str().unwrap_or("HTTP Trigger").to_string();
-    let authentication = trigger["authentication"].as_str().unwrap_or("none").to_string();
-    let respond = trigger["respond"].as_str().unwrap_or("immediately").to_string();
-    let settings = trigger["settings"].as_object().cloned().unwrap_or_default();
-    let options = trigger["options"].as_object().cloned().unwrap_or_default();
-    let on_error =
-        settings.get("on_error").and_then(Value::as_str).unwrap_or("stop_workflow").to_string();
-    let notes = settings.get("notes").and_then(Value::as_str).unwrap_or("").to_string();
-    rsx! {
-        div { class: "workflow-http-trigger-editor",
-            section { class: "workflow-http-trigger-editor__overview",
-                div { class: "workflow-http-trigger-editor__icon", EditorIcon { name: "radio", size: 28 } }
-                h2 { "HTTP Trigger" }
-                p { "Start this workflow when an HTTP request arrives." }
-                div { class: "workflow-http-trigger-editor__url-label", "Endpoint preview" }
-                code { class: "workflow-http-trigger-editor__url", "{method}  {path}" }
-                p { class: "workflow-http-trigger-editor__muted", "The endpoint accepts requests when the workflow is active." }
-            }
-            section { class: "workflow-http-trigger-editor__parameters",
-                header { class: "workflow-http-trigger-editor__tabs",
-                    button { class: if tab() == "parameters" { "is-active" } else { "" }, r#type: "button", onclick: move |_| tab.set("parameters".to_string()), "Parameters" }
-                    button { class: if tab() == "settings" { "is-active" } else { "" }, r#type: "button", onclick: move |_| tab.set("settings".to_string()), "Settings" }
-                    span { class: "workflow-http-trigger-editor__spacer" }
-                    button { class: "button button-primary", r#type: "button", title: "Listen for a test event", onclick: move |_| {}, "Listen for test event" }
-                }
-                div { class: "workflow-http-trigger-editor__form-scroll",
-                    if tab() == "parameters" {
-                        label { class: "field",
-                            span { "Node name" }
-                            input { value: "{trigger_name}", oninput: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["name"] = Value::String(event.value()); on_change.call(next); } } }
-                        }
-                        div { class: "workflow-http-trigger-editor__url-preview",
-                            strong { "HTTP endpoint" }
-                            div { class: "workflow-http-trigger-editor__url-line",
-                                span { class: "workflow-http-trigger-editor__method-badge", "{method}" }
-                                code { "{path}" }
-                            }
-                        }
-                        label { class: "field",
-                            span { "HTTP Method" }
-                            select {
-                                value: "{method}",
-                                onchange: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["method"] = Value::String(event.value()); on_change.call(next); } },
-                                for option in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] { option { value: "{option}", selected: method == option, "{option}" } }
-                            }
-                        }
-                        label { class: "field",
-                            span { "Path" }
-                            input { value: "{path}", placeholder: "/api/products", oninput: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["path"] = Value::String(event.value()); on_change.call(next); } } }
-                        }
-                        label { class: "field",
-                            span { "Authentication" }
-                            select {
-                                value: "{authentication}",
-                                onchange: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["authentication"] = Value::String(event.value()); on_change.call(next); } },
-                                option { value: "none", "None" }
-                            }
-                        }
-                        label { class: "field",
-                            span { "Respond" }
-                            select {
-                                value: "{respond}",
-                                onchange: { let trigger = trigger.clone(); move |event| { let mut next = trigger.clone(); next["respond"] = Value::String(event.value()); on_change.call(next); } },
-                                option { value: "immediately", "Immediately" }
-                                option { value: "last_task", "When the last task finishes" }
-                            }
-                        }
-                        aside { class: "workflow-http-trigger-editor__notice", "If you send a response, set a Content-Type header that matches the response body." }
-                        div { class: "workflow-http-trigger-editor__options-heading", strong { "Options" } }
-                        for (key, label) in [("response_code", "Response code"), ("response_content_type", "Response content type")] {
-                            {
-                                let current = options.get(key).map(display_form_value).unwrap_or_default();
-                                let trigger = trigger.clone();
-                                rsx! { label { class: "field",
-                                    span { "{label}" }
-                                    input { value: "{current}", placeholder: if key == "response_code" { "200" } else { "application/json" }, oninput: move |event| {
-                                        let mut next = trigger.clone();
-                                        if !next["options"].is_object() { next["options"] = json!({}); }
-                                        next["options"][key] = if event.value().is_empty() { Value::Null } else { Value::String(event.value()) };
-                                        on_change.call(next);
-                                    } }
-                                } }
-                            }
-                        }
-                    } else {
-                        for (key, label) in [("allow_multiple_http_methods", "Allow Multiple HTTP Methods"), ("always_output_data", "Always Output Data"), ("execute_once", "Execute Once"), ("retry_on_fail", "Retry On Fail"), ("display_note_in_flow", "Display Note in Flow?")] {
-                            {
-                                let checked = settings.get(key).and_then(Value::as_bool).unwrap_or(false);
-                                let trigger = trigger.clone();
-                                rsx! { label { class: "workflow-http-trigger-editor__toggle",
-                                    input { r#type: "checkbox", checked, onchange: move |event| {
-                                        let mut next = trigger.clone();
-                                        if !next["settings"].is_object() { next["settings"] = json!({}); }
-                                        next["settings"][key] = Value::Bool(event.checked());
-                                        on_change.call(next);
-                                    } }
-                                    span { class: "workflow-http-trigger-editor__switch" }
-                                    span { "{label}" }
-                                } }
-                            }
-                        }
-                        label { class: "field",
-                            span { "On Error" }
-                            select {
-                                value: "{on_error}",
-                                onchange: { let trigger = trigger.clone(); move |event| {
-                                    let mut next = trigger.clone();
-                                    if !next["settings"].is_object() { next["settings"] = json!({}); }
-                                    next["settings"]["on_error"] = Value::String(event.value());
-                                    on_change.call(next);
-                                } },
-                                option { value: "stop_workflow", "Stop Workflow" }
-                                option { value: "continue", "Continue" }
-                                option { value: "continue_with_error_output", "Continue using error output" }
-                            }
-                        }
-                        label { class: "field",
-                            span { "Notes" }
-                            textarea { value: "{notes}", oninput: { let trigger = trigger.clone(); move |event| {
-                                let mut next = trigger.clone();
-                                if !next["settings"].is_object() { next["settings"] = json!({}); }
-                                next["settings"]["notes"] = Value::String(event.value());
-                                on_change.call(next);
-                            } } }
-                        }
-                    }
-                }
-            }
-            section { class: "workflow-http-trigger-editor__output",
-                p { class: "workflow-editor__eyebrow", "OUTPUT" }
-                div { class: "workflow-http-trigger-editor__empty-output",
-                    EditorIcon { name: "zap", size: 22 }
-                    strong { "No trigger output" }
-                    small { "Listen for a test event to preview incoming request data." }
-                }
-            }
-        }
-    }
-}
-
-fn create_http_trigger() -> Value {
-    json!({
-        "type": "http",
-        "name": "HTTP Trigger",
-        "method": "GET",
-        "path": "/api/products",
-        "authentication": "none",
-        "respond": "immediately",
-        "options": {},
-        "settings": {
-            "allow_multiple_http_methods": false,
-            "always_output_data": false,
-            "execute_once": false,
-            "retry_on_fail": false,
-            "on_error": "stop_workflow",
-            "notes": "",
-            "display_note_in_flow": false
-        }
-    })
 }
 
 fn create_database_trigger() -> Value {
@@ -2226,6 +2156,21 @@ fn task_definition(task: &Value) -> Option<Value> {
     task.get(task_name(task)?).cloned()
 }
 
+fn task_kind_is_supported(task: &Value) -> bool {
+    task_definition(task)
+        .and_then(|definition| {
+            definition
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .and_then(|object| object.keys().next().cloned())
+        })
+        .is_some_and(|kind| TASK_TYPES.contains(&kind.as_str()))
+}
+
+fn trigger_kind_is_supported(trigger: &Value) -> bool {
+    matches!(trigger["type"].as_str(), Some("database"))
+}
+
 fn replace_task_definition(document: &mut Value, index: usize, name: &str, definition: Value) {
     let mut task = Map::new();
     task.insert(name.to_owned(), definition);
@@ -2270,6 +2215,14 @@ fn create_task(kind: &str, tasks: &[Value]) -> Value {
 
 fn format_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".into())
+}
+
+fn format_validation_error(error: &str) -> String {
+    if error.contains("workflow must define at least one task") {
+        "Add at least one task to the workflow before saving.".into()
+    } else {
+        error.to_string()
+    }
 }
 
 fn pretty_type(value: &str) -> String {
@@ -2341,6 +2294,7 @@ fn EditorIcon(name: &'static str, #[props(default = 16)] size: u32) -> Element {
         "radio" => rsx! { Radio { size, class } },
         "repeat" => rsx! { Repeat { size, class } },
         "search" => rsx! { Search { size, class } },
+        "settings" => rsx! { Settings { size, class } },
         "shield-alert" => rsx! { ShieldAlert { size, class } },
         "sparkles" => rsx! { Sparkles { size, class } },
         "table" => rsx! { Table { size, class } },
@@ -2352,5 +2306,61 @@ fn EditorIcon(name: &'static str, #[props(default = 16)] size: u32) -> Element {
         "zoom-out" => rsx! { ZoomOut { size, class } },
         "x" => rsx! { X { size, class } },
         _ => rsx! { Workflow { size, class } },
+    }
+}
+
+#[component]
+fn WorkflowChatOverlay(
+    messages: Vec<WorkflowChatMessage>, busy: bool, on_send: EventHandler<String>,
+    on_apply: EventHandler<String>, on_close: EventHandler<()>,
+) -> Element {
+    let mut draft = use_signal(String::new);
+    rsx! {
+        aside { class: "workflow-chat-overlay", aria_label: "AI workflow assistant",
+            header { class: "workflow-chat-overlay__header",
+                div {
+                    strong { "Workflow assistant" }
+                    small { "Describe a workflow or ask for a change" }
+                }
+                button { class: "workflow-editor__icon-action", title: "Close assistant", aria_label: "Close assistant", r#type: "button", onclick: move |_| on_close.call(()), EditorIcon { name: "x", size: 17 } }
+            }
+            div { class: "workflow-chat-overlay__messages",
+                if messages.is_empty() {
+                    div { class: "workflow-chat-overlay__empty",
+                        EditorIcon { name: "sparkles", size: 20 }
+                        strong { "What should this workflow do?" }
+                        p { "Ask for a new workflow or describe an edit. Generated changes stay here until you apply them." }
+                    }
+                }
+                for message in messages.iter() {
+                    {
+                        let class = if message.role == "user" { "workflow-chat-overlay__message is-user" } else { "workflow-chat-overlay__message" };
+                        let proposed_definition = message.definition_json.clone();
+                        rsx! {
+                            article { class: "{class}",
+                                p { "{message.content}" }
+                                if let Some(definition_json) = proposed_definition {
+                                    button { class: "button button-primary workflow-chat-overlay__apply", r#type: "button", onclick: move |_| on_apply.call(definition_json.clone()), EditorIcon { name: "plus", size: 14 } "Apply workflow changes" }
+                                }
+                            }
+                        }
+                    }
+                }
+                if busy {
+                    div { class: "workflow-chat-overlay__typing", span {} span {} span {} "Thinking" }
+                }
+            }
+            form { class: "workflow-chat-overlay__composer", onsubmit: move |event| {
+                event.prevent_default();
+                let prompt = draft().trim().to_string();
+                if !prompt.is_empty() && !busy { draft.set(String::new()); on_send.call(prompt); }
+            },
+                textarea { value: "{draft}", rows: "2", placeholder: "Ask the workflow assistant…", aria_label: "Message the workflow assistant", oninput: move |event| draft.set(event.value()) }
+                div { class: "workflow-chat-overlay__composer-footer",
+                    small { "AI suggestions require review before use." }
+                    button { class: "button button-primary", r#type: "submit", disabled: busy || draft().trim().is_empty(), EditorIcon { name: "arrow-up", size: 15 } "Send" }
+                }
+            }
+        }
     }
 }

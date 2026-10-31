@@ -9,7 +9,7 @@ use dioxus_icons::lucide::{
     ellipsis::Ellipsis, file_text::FileText, history::History, kanban::Kanban, key_round::KeyRound,
     layout_dashboard::LayoutDashboard, list::List, pencil::Pencil, play::Play, plus::Plus,
     save::Save, search::Search, settings::Settings, sliders_horizontal::SlidersHorizontal,
-    sparkles::Sparkles, table::Table, upload::Upload, workflow::Workflow, x::X,
+    sparkles::Sparkles, table::Table, trash_2::Trash2, upload::Upload, workflow::Workflow, x::X,
 };
 
 /// Reuses the project's Lucide icon set through semantic names used by the UI.
@@ -51,6 +51,7 @@ pub fn Icon(name: &'static str) -> Element {
         "sort" => rsx! { ArrowUpDown { size: 16, class: "ui-icon" } },
         "sparkles" => rsx! { Sparkles { size: 16, class: "ui-icon" } },
         "table" => rsx! { Table { size: 16, class: "ui-icon" } },
+        "trash" => rsx! { Trash2 { size: 16, class: "ui-icon" } },
         "variable" => rsx! { Braces { size: 16, class: "ui-icon" } },
         "workflow" => rsx! { Workflow { size: 16, class: "ui-icon" } },
         "upload" => rsx! { Upload { size: 16, class: "ui-icon" } },

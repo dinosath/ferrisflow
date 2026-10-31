@@ -8,7 +8,7 @@ mod components;
 mod pages;
 
 use pages::{
-    Credentials, DataTables, EditWorkflow, Executions, NewWorkflow, Overview, Variables,
+    AiSettings, Credentials, DataTables, EditWorkflow, Executions, NewWorkflow, Overview, Variables,
     ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
@@ -68,4 +68,6 @@ enum Route {
     Credentials {},
     #[route("/variables")]
     Variables {},
+    #[route("/settings/ai")]
+    AiSettings {},
 }

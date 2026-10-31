@@ -1,4 +1,5 @@
 pub(crate) mod api;
+mod ai_settings;
 mod data_tables;
 pub(crate) mod models;
 mod overview;
@@ -10,6 +11,7 @@ mod workflow_list;
 mod workspace_sections;
 
 pub(crate) use data_tables::DataTables;
+pub(crate) use ai_settings::AiSettings;
 pub(crate) use overview::Overview;
 pub(crate) use ows_editor::OwsEditor;
 pub(crate) use workflow_detail::WorkflowDetail;

@@ -48,6 +48,15 @@
 .workflow-row-run { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 9px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; color: #667085; vertical-align: middle; cursor: pointer; }
 .workflow-row-run:hover { background: #f4f4f5; color: #18181b; }
 .workflow-row-run .ui-icon { width: 14px; height: 14px; }
+.workflow-row-settings { margin-left: 5px; }
+.workflow-settings-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgb(18 24 38 / 38%); }
+.workflow-settings-dialog { width: min(100%, 520px); padding: 22px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 24px 70px rgb(15 23 42 / 22%); }
+.workflow-settings-dialog__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.workflow-settings-dialog__header h2 { margin: 4px 0 0; font-size: 20px; }
+.workflow-settings-dialog__description { margin: 12px 0 18px; color: #667085; font-size: 13px; line-height: 1.5; }
+.workflow-settings-dialog__toggle { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; color: #252a35; font-size: 13px; font-weight: 600; }
+.workflow-settings-dialog__hint { margin: 10px 0; color: #667085; font-size: 12px; }
+.workflow-settings-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .execution-status { display: inline-flex; align-items: center; min-height: 23px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 550; text-transform: capitalize; }
 .execution-status--success { background: #eaf6ef; color: #24734a; }
 .execution-status--failed { background: #fff0ef; color: #a3312b; }

@@ -88,6 +88,28 @@ export async function run(dioxus) {
 );
 
 #[component]
+fn SidebarSection(title: &'static str, nav_class: &'static str, children: Element) -> Element {
+    rsx! {
+        section { class: "sidebar-section",
+            div { class: "sidebar-section-label", "{title}" }
+            nav { class: "{nav_class}", {children} }
+        }
+    }
+}
+
+#[component]
+fn SidebarItem(to: Route, active: bool, icon: &'static str, label: &'static str) -> Element {
+    rsx! {
+        Link {
+            class: if active { "sidebar-link selected" } else { "sidebar-link" },
+            to,
+            span { class: "sidebar-icon", Icon { name: icon } }
+            "{label}"
+        }
+    }
+}
+
+#[component]
 pub(crate) fn Shell(
     active: &'static str, header: &'static str, intro: &'static str, actions: Element,
     #[props(default)] breadcrumb_title: Option<String>,
@@ -127,27 +149,22 @@ pub(crate) fn Shell(
                         }
                     }
                 }
-                div { class: "sidebar-section-label", "General" }
-                nav { class: "sidebar-nav sidebar-nav--dashboard",
-                    Link { class: if active == "overview" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::Overview {}, span { class: "sidebar-icon", Icon { name: "layout" } } "Overview" }
+                SidebarSection { title: "General", nav_class: "sidebar-nav sidebar-nav--dashboard",
+                    SidebarItem { to: Route::Overview {}, active: active == "overview", icon: "layout", label: "Overview" }
                 }
-                div { class: "sidebar-section-label", "Workspace" }
-                nav { class: "sidebar-nav",
-                    Link { class: if active == "datatables" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::DataTables {}, span { class: "sidebar-icon", Icon { name: "table" } } "Data tables" }
-                    Link { class: if active == "workflows" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::WorkflowList {}, span { class: "sidebar-icon", Icon { name: "workflow" } } "Workflows" }
-                    Link { class: if active == "executions" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::Executions {}, span { class: "sidebar-icon", Icon { name: "clock" } } "Executions" }
+                SidebarSection { title: "Workspace", nav_class: "sidebar-nav",
+                    SidebarItem { to: Route::DataTables {}, active: active == "datatables", icon: "table", label: "Data tables" }
+                    SidebarItem { to: Route::WorkflowList {}, active: active == "workflows", icon: "workflow", label: "Workflows" }
+                    SidebarItem { to: Route::Executions {}, active: active == "executions", icon: "clock", label: "Executions" }
                 }
-                div { class: "sidebar-section-label", "Resources" }
-                nav { class: "sidebar-nav",
-                    Link { class: if active == "credentials" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::Credentials {}, span { class: "sidebar-icon", Icon { name: "key" } } "Credentials" }
-                    Link { class: if active == "variables" { "sidebar-link selected" } else { "sidebar-link" }, to: Route::Variables {}, span { class: "sidebar-icon", Icon { name: "variable" } } "Variables" }
+                SidebarSection { title: "Resources", nav_class: "sidebar-nav",
+                    SidebarItem { to: Route::Credentials {}, active: active == "credentials", icon: "key", label: "Credentials" }
+                    SidebarItem { to: Route::Variables {}, active: active == "variables", icon: "variable", label: "Variables" }
+                }
+                SidebarSection { title: "Settings", nav_class: "sidebar-nav",
+                    SidebarItem { to: Route::AiSettings {}, active: active == "settings_ai", icon: "sparkles", label: "AI integration" }
                 }
                 div { class: "sidebar-spacer" }
-                nav { class: "sidebar-nav sidebar-nav--bottom",
-                    button { class: "sidebar-link", r#type: "button", span { class: "sidebar-icon", Icon { name: "settings" } } "Settings" }
-                    button { class: "sidebar-link", r#type: "button", span { class: "sidebar-icon", Icon { name: "help" } } "Help center" }
-                }
-                div { class: "sidebar-user", span { class: "sidebar-user__avatar", "FF" } span { strong { "Ferris Flow" } small { "Local user" } } span { class: "sidebar-user__menu", Icon { name: "chevron-down" } } }
                 div {
                     class: "sidebar-resize-handle",
                     role: "separator",
@@ -259,8 +276,12 @@ pub(crate) fn Shell(
                         }
                     }
                     div { class: "topbar-right",
-                        span { class: "service-state", span { class: "state-dot" } "Connected" }
                         if let Some(save) = breadcrumb_save { {save} }
+                        button { class: "topbar-user", r#type: "button", title: "User menu", aria_label: "User menu",
+                            span { class: "sidebar-user__avatar", "FF" }
+                            span { class: "topbar-user__copy", strong { "Ferris Flow" } small { "Local user" } }
+                            span { class: "sidebar-user__menu", Icon { name: "chevron-down" } }
+                        }
                     }
                 }
                 main { class: "main-content",

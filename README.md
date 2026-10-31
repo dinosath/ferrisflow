@@ -77,6 +77,12 @@ app configuration and assets live in `Dioxus.toml` and `assets/`. The UI uses
 the plain `/api/workflows` REST endpoints. Set `DATABASE_URL` to use a different
 database, including PostgreSQL.
 
+Configure the workflow editor's AI chat overlay in **Settings → AI integration**.
+Add an OpenAI, OpenRouter, Ollama, or custom OpenAI-compatible provider, then
+set its model and API key. Provider records are stored in the configured app
+database; API responses expose only whether a key is saved, never the key. The
+key is currently stored unencrypted at rest in that database.
+
 ## API
 
 The service exposes the existing CRUD contract:

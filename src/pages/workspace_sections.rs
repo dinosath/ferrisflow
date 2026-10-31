@@ -9,30 +9,20 @@ use crate::Route;
 use crate::components::data_table::DataTable;
 use crate::components::data_table::{DataTableCell, DataTableRow};
 use crate::components::icons::Icon;
-use crate::components::workflow_run::WorkflowRunDialog;
 
 #[component]
 pub(crate) fn Executions() -> Element {
-    let mut refresh_tick = use_signal(|| 0_u64);
-    let executions = use_resource(move || {
-        let current = refresh_tick();
-        async move {
-            let _ = current;
-            list_executions().await
-        }
-    });
+    let executions = use_resource(list_executions);
     let workflows = use_resource(list_workflows);
-    let mut run_dialog_open = use_signal(|| false);
     let mut query = use_signal(String::new);
     let mut status_filter = use_signal(|| "all".to_string());
     let mut workflow_filter = use_signal(|| "all".to_string());
     let mut started_after = use_signal(String::new);
     let mut selected_execution = use_signal(|| None::<ExecutionRecord>);
-    let on_run_complete = move |_| refresh_tick.set(refresh_tick() + 1);
 
     rsx! {
         Shell { active: "executions", header: "Executions", intro: "Review workflow runs and their results.", actions: rsx! {
-            button { class: "button button-primary", r#type: "button", disabled: workflows().is_none(), onclick: move |_| run_dialog_open.set(true), Icon { name: "play" } "Run workflow" }
+            Link { class: "button button-primary", to: Route::NewWorkflow {}, "+ New workflow" }
         },
             match executions() {
                 Some(Ok(rows)) => {
@@ -84,20 +74,6 @@ pub(crate) fn Executions() -> Element {
                 },
                 Some(Err(error)) => rsx! { ErrorPanel { message: error } },
                 None => rsx! { LoadingPanel {} },
-            }
-            if run_dialog_open() {
-                match workflows() {
-                    Some(Ok(items)) => rsx! {
-                        WorkflowRunDialog {
-                            workflows: items,
-                            selected_workflow: None,
-                            on_close: move |_| run_dialog_open.set(false),
-                            on_complete: on_run_complete,
-                        }
-                    },
-                    Some(Err(error)) => rsx! { ErrorPanel { message: error } },
-                    None => rsx! { LoadingPanel {} },
-                }
             }
         }
     }

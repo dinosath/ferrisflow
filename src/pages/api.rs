@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::models::{DatabaseTables, ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
 use serde_json::Value;
@@ -19,6 +19,43 @@ struct ValidationError {
     message: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(super) struct AiProvider {
+    pub id: i32,
+    pub name: String,
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_set: bool,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct AiProviderInput {
+    pub name: String,
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Deserialize)]
+struct AiProviderListResponse {
+    data: Vec<AiProvider>,
+}
+
+#[derive(Deserialize)]
+struct AiProviderResponse {
+    data: AiProvider,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WorkflowChatResponse {
+    pub reply: String,
+    pub definition_json: Option<String>,
+}
+
 fn api_url(path: &str) -> String {
     #[cfg(target_arch = "wasm32")]
     {
@@ -36,6 +73,36 @@ fn api_url(path: &str) -> String {
             path
         )
     }
+}
+
+pub(super) async fn list_ai_providers() -> Result<Vec<AiProvider>, String> {
+    let response = reqwest::get(api_url("/api/ai/providers"))
+        .await
+        .map_err(|error| error.to_string())?;
+    let response: AiProviderListResponse = decode_response(response).await?;
+    Ok(response.data)
+}
+
+pub(super) async fn save_ai_provider(
+    input: AiProviderInput, id: Option<i32>,
+) -> Result<AiProvider, String> {
+    let client = reqwest::Client::new();
+    let request = match id {
+        Some(id) => client.put(api_url(&format!("/api/ai/providers/{id}"))),
+        None => client.post(api_url("/api/ai/providers")),
+    };
+    let response = request.json(&input).send().await.map_err(|error| error.to_string())?;
+    let response: AiProviderResponse = decode_response(response).await?;
+    Ok(response.data)
+}
+
+pub(super) async fn delete_ai_provider(id: i32) -> Result<(), String> {
+    let response = reqwest::Client::new()
+        .delete(api_url(&format!("/api/ai/providers/{id}")))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.status().is_success() { Ok(()) } else { Err(response_error(response).await) }
 }
 
 pub(super) async fn list_workflows() -> Result<Vec<Workflow>, String> {
@@ -91,6 +158,24 @@ pub(super) async fn validate_workflow(definition_json: String) -> Result<Vec<Str
             .map(|error| error.message.unwrap_or_else(|| "Invalid OWS definition".into()))
             .collect())
     }
+}
+
+pub(super) async fn workflow_ai_chat(
+    prompt: String,
+    definition_json: String,
+    history: Vec<(String, String)>,
+) -> Result<WorkflowChatResponse, String> {
+    let history = history
+        .into_iter()
+        .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
+        .collect::<Vec<_>>();
+    let response = reqwest::Client::new()
+        .post(api_url("/api/ai/workflow-chat"))
+        .json(&serde_json::json!({ "prompt": prompt, "definition_json": definition_json, "history": history }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    decode_response(response).await
 }
 
 pub(super) async fn execute_workflow(
