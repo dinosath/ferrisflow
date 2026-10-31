@@ -2931,12 +2931,12 @@ dependencies = [
  "connectrpc-build",
  "dioxus",
  "dioxus-icons",
- "ferris-workflow-editor",
  "migration",
  "mimalloc",
- "ows-runtime",
- "ows-runtime-core",
- "ows-runtime-dsl",
+ "ows",
+ "ows-core",
+ "ows-dsl",
+ "ows-workflow-editor",
  "prost",
  "protox",
  "reqwest 0.13.5",
@@ -2958,15 +2958,6 @@ dependencies = [
  "validator",
  "wasm-bindgen",
  "web-sys",
-]
-
-[[package]]
-name = "ferris-workflow-editor"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "dioxus-icons",
- "serde_json",
 ]
 
 [[package]]
@@ -5538,9 +5529,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime"
+name = "ows"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5548,16 +5539,17 @@ dependencies = [
  "http",
  "indexmap 2.14.2",
  "jsonschema",
- "ows-runtime-core",
- "ows-runtime-dsl",
- "ows-runtime-events",
- "ows-runtime-expressions",
- "ows-runtime-observability",
- "ows-runtime-scheduler",
+ "ows-core",
+ "ows-dsl",
+ "ows-events",
+ "ows-expressions",
+ "ows-observability",
+ "ows-scheduler",
  "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "serde_yaml",
  "serverless_workflow_core",
  "thiserror 1.0.69",
  "tokio",
@@ -5566,9 +5558,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime-core"
+name = "ows-core"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
  "async-trait",
  "rand 0.8.8",
@@ -5581,11 +5573,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime-dsl"
+name = "ows-dsl"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
- "ows-runtime-core",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5594,12 +5586,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime-events"
+name = "ows-events"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
  "async-trait",
- "ows-runtime-core",
+ "ows-core",
  "regex",
  "serde",
  "serde_json",
@@ -5608,24 +5600,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime-expressions"
+name = "ows-expressions"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
- "ows-runtime-core",
+ "ows-core",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "ows-runtime-observability"
+name = "ows-observability"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
  "async-trait",
- "ows-runtime-core",
- "ows-runtime-events",
+ "ows-core",
+ "ows-events",
  "serde",
  "serde_json",
  "tokio",
@@ -5634,18 +5626,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "ows-runtime-scheduler"
+name = "ows-scheduler"
 version = "0.1.0"
-source = "git+https://github.com/dinosath/ows-runtime-rust?rev=cf72d94687db54d6de8ff0806bbaf2c37af2e037#cf72d94687db54d6de8ff0806bbaf2c37af2e037"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
 dependencies = [
  "async-trait",
  "chrono",
  "cron",
- "ows-runtime-core",
+ "ows-core",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+]
+
+[[package]]
+name = "ows-workflow-editor"
+version = "0.1.0"
+source = "git+https://github.com/dinosath/ows-rs?rev=3e62718bb250fe4b34f944f6337f385daf74bc5c#3e62718bb250fe4b34f944f6337f385daf74bc5c"
+dependencies = [
+ "dioxus",
+ "dioxus-icons",
+ "serde_json",
 ]
 
 [[package]]

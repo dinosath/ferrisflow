@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Request, StatusCode},
     response::IntoResponse,
 };
-use ows_runtime::Runtime;
+use ows::Runtime;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
@@ -476,7 +476,7 @@ pub(crate) async fn run_ows(
     let result = async {
         let definition = parse_ows_document(&request.definition_json)?;
         let allowed_hosts = workflow_endpoint_hosts(&request.definition_json);
-        let policy = ows_runtime_core::RuntimePolicy {
+        let policy = ows_core::RuntimePolicy {
             allow_network: !allowed_hosts.is_empty(),
             allowed_hosts,
             allowed_schemes: vec!["http".to_string(), "https".to_string()],

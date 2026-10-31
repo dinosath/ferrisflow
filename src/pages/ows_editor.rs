@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
-use ferris_workflow_editor::{
-    ValidationState, WorkflowChatMessage, WorkflowEditor, WorkflowExecution, WorkflowExecutionRecord,
-    WorkflowExecutionStep,
+use ows_workflow_editor::{
+    ValidationState, WorkflowEditor, WorkflowExecution, WorkflowExecutionRecord,
+    WorkflowExecutionStep, WorkflowExample,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -21,6 +21,7 @@ pub(crate) fn OwsEditor(
     initial_execution_id: Option<String>, on_open_settings: EventHandler<()>,
     ai_messages: Vec<WorkflowChatMessage>, ai_busy: bool,
     on_ai_chat: EventHandler<String>, on_ai_apply: EventHandler<String>,
+    on_import: EventHandler<()>,
 ) -> Element {
     let mut last_definition = use_signal(String::new);
     let mut execution = use_signal(WorkflowExecution::default);
@@ -28,6 +29,11 @@ pub(crate) fn OwsEditor(
     let database_tables = use_resource(list_database_tables);
     let mut database_listening = use_signal(|| false);
     let mut database_event = use_signal(|| None::<String>);
+    let mut assistant_open = use_signal(|| false);
+    let mut input_open = use_signal(|| false);
+    let mut input_json = use_signal(|| "{}".to_string());
+    let mut input_error = use_signal(|| None::<String>);
+    let mut execution_input = use_signal(|| serde_json::json!({}));
     let execution_history = use_resource(move || {
         let refresh = execution_refresh();
         async move {
@@ -37,28 +43,28 @@ pub(crate) fn OwsEditor(
     });
     let validation_generation = use_hook(|| Rc::new(Cell::new(0_u64)));
     let generation_for_effect = validation_generation.clone();
-    let definition_for_effect = definition.clone();
 
-    use_effect(move || {
-        let current = definition_for_effect.clone();
-        if last_definition() == current {
-            return;
-        }
-        last_definition.set(current.clone());
-        let generation = generation_for_effect.get() + 1;
-        generation_for_effect.set(generation);
-        let checking = ValidationState { checking: true, ..Default::default() };
-        on_validation.call(checking);
-        let validation_generation = generation_for_effect.clone();
-        spawn(async move {
-            let result = validate_workflow(current).await;
-            if validation_generation.get() != generation {
+    use_effect(use_reactive((&definition,), {
+        move |(current,)| {
+            let current = current.clone();
+            if last_definition() == current {
                 return;
             }
-            let result = validation_result(result);
-            on_validation.call(result);
-        });
-    });
+            last_definition.set(current.clone());
+            let generation = generation_for_effect.get() + 1;
+            generation_for_effect.set(generation);
+            let checking = ValidationState { checking: true, ..Default::default() };
+            on_validation.call(checking);
+            let validation_generation = generation_for_effect.clone();
+            spawn(async move {
+                let result = validate_workflow(current).await;
+                if validation_generation.get() != generation {
+                    return;
+                }
+                on_validation.call(validation_result(result));
+            });
+        }
+    }));
 
     let generation_for_change = validation_generation.clone();
     let generation_for_change_async = validation_generation.clone();
@@ -99,9 +105,10 @@ pub(crate) fn OwsEditor(
     let on_execute = move |_| {
         let current = definition_for_execution.clone();
         let name = workflow_name_for_execution.clone();
+        let input = execution_input();
         execution.set(WorkflowExecution { running: true, ..Default::default() });
         spawn(async move {
-            let result = execute_workflow(current, workflow_id, Some(name)).await;
+            let result = execute_workflow(current, workflow_id, Some(name), input).await;
             execution.set(match result {
                 Ok(result) => WorkflowExecution {
                     execution_id: Some(result.execution_id),
@@ -157,26 +164,109 @@ pub(crate) fn OwsEditor(
     };
 
     rsx! {
-        WorkflowEditor {
-            definition,
-            on_change,
-            on_validate,
-            validation,
-            execution: execution(),
-            on_execute,
-            execution_history,
-            initial_execution_id,
-            notice,
-            database_backend: database_tables.backend,
-            database_tables: database_tables.tables,
-            database_listening: database_listening(),
-            database_event: database_event(),
-            on_listen_database_event,
-            on_open_settings,
-            ai_messages,
-            ai_busy,
-            on_ai_chat,
-            on_ai_apply,
+        div { class: "workflow-editor-integration",
+            div { class: "workflow-editor-project-actions",
+                button { class: "button button-quiet", r#type: "button", onclick: move |_| assistant_open.set(!assistant_open()), "AI assistant" }
+                button { class: "button button-quiet", r#type: "button", onclick: move |_| on_open_settings.call(()), "Workflow settings" }
+            }
+            div { class: "workflow-editor-integration__canvas",
+                WorkflowEditor {
+                    definition,
+                    on_change,
+                    on_validate,
+                    validation,
+                    execution: execution(),
+                    on_execute,
+                    on_import,
+                    examples: Vec::<WorkflowExample>::new(),
+                    on_select_example: move |_| {},
+                    on_configure_input: move |_| { input_json.set(execution_input().to_string()); input_error.set(None); input_open.set(true); },
+                    execution_history,
+                    initial_execution_id,
+                    notice,
+                    database_backend: database_tables.backend,
+                    database_tables: database_tables.tables,
+                    database_listening: database_listening(),
+                    database_event: database_event(),
+                    on_listen_database_event,
+                }
+                if assistant_open() {
+                    WorkflowChatOverlay {
+                        messages: ai_messages,
+                        busy: ai_busy,
+                        on_send: on_ai_chat,
+                        on_apply: on_ai_apply,
+                        on_close: move |_| assistant_open.set(false),
+                    }
+                }
+            }
+            if input_open() {
+                div { class: "workflow-settings-overlay", role: "presentation", onclick: move |_| input_open.set(false),
+                    section { class: "workflow-settings-dialog", role: "dialog", aria_modal: "true", aria_label: "Workflow input", onclick: move |event| event.stop_propagation(),
+                        header { class: "workflow-settings-dialog__header", h2 { "Execution input" }
+                            button { class: "button button-quiet", r#type: "button", onclick: move |_| input_open.set(false), "Close" }
+                        }
+                        p { class: "workflow-settings-dialog__description", "Provide the JSON object passed to this workflow when it runs." }
+                        textarea { class: "workflow-editor__definition code-editor", value: "{input_json}", rows: "10", spellcheck: "false", oninput: move |event| input_json.set(event.value()) }
+                        if let Some(message) = input_error() { div { class: "error-panel", "{message}" } }
+                        footer { class: "workflow-settings-dialog__actions",
+                            button { class: "button button-quiet", r#type: "button", onclick: move |_| input_open.set(false), "Cancel" }
+                            button { class: "button button-primary", r#type: "button", onclick: move |_| match serde_json::from_str::<serde_json::Value>(&input_json()) {
+                                Ok(value) if value.is_object() => { execution_input.set(value); input_open.set(false); }
+                                Ok(_) => input_error.set(Some("Workflow input must be a JSON object.".into())),
+                                Err(error) => input_error.set(Some(format!("Invalid JSON: {error}"))),
+                            }, "Use input" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkflowChatMessage {
+    pub role: String,
+    pub content: String,
+    pub definition_json: Option<String>,
+}
+
+#[component]
+fn WorkflowChatOverlay(
+    messages: Vec<WorkflowChatMessage>, busy: bool, on_send: EventHandler<String>,
+    on_apply: EventHandler<String>, on_close: EventHandler<()>,
+) -> Element {
+    let mut draft = use_signal(String::new);
+    rsx! {
+        aside { class: "workflow-chat-overlay", aria_label: "AI workflow assistant",
+            header { class: "workflow-chat-overlay__header",
+                div { strong { "Workflow assistant" } small { "Describe a workflow or ask for a change" } }
+                button { class: "workflow-editor__icon-action", title: "Close assistant", aria_label: "Close assistant", r#type: "button", onclick: move |_| on_close.call(()), "×" }
+            }
+            div { class: "workflow-chat-overlay__messages",
+                if messages.is_empty() {
+                    div { class: "workflow-chat-overlay__empty", strong { "What should this workflow do?" } p { "Ask for a new workflow or describe an edit. Generated changes stay here until you apply them." } }
+                }
+                for message in messages.iter() {
+                    article { class: if message.role == "user" { "workflow-chat-overlay__message is-user" } else { "workflow-chat-overlay__message" },
+                        p { "{message.content}" }
+                        if let Some(definition_json) = message.definition_json.clone() {
+                            button { class: "button button-primary workflow-chat-overlay__apply", r#type: "button", onclick: move |_| on_apply.call(definition_json.clone()), "Apply workflow changes" }
+                        }
+                    }
+                }
+                if busy { div { class: "workflow-chat-overlay__typing", span {} span {} span {} "Thinking" } }
+            }
+            form { class: "workflow-chat-overlay__composer", onsubmit: move |event| {
+                event.prevent_default();
+                let prompt = draft().trim().to_string();
+                if !prompt.is_empty() && !busy { draft.set(String::new()); on_send.call(prompt); }
+            },
+                textarea { value: "{draft}", rows: "2", placeholder: "Ask the workflow assistant…", aria_label: "Message the workflow assistant", oninput: move |event| draft.set(event.value()) }
+                div { class: "workflow-chat-overlay__composer-footer", small { "AI suggestions require review before use." }
+                    button { class: "button button-primary", r#type: "submit", disabled: busy || draft().trim().is_empty(), "Send" }
+                }
+            }
         }
     }
 }

@@ -180,10 +180,11 @@ pub(super) async fn workflow_ai_chat(
 
 pub(super) async fn execute_workflow(
     definition_json: String, workflow_id: Option<i32>, workflow_name: Option<String>,
+    input: serde_json::Value,
 ) -> Result<ExecutionResult, String> {
     let response = reqwest::Client::new()
         .post(api_url("/api/workflows/execute"))
-        .json(&serde_json::json!({ "definition_json": definition_json, "workflow_id": workflow_id, "workflow_name": workflow_name, "input": {} }))
+        .json(&serde_json::json!({ "definition_json": definition_json, "workflow_id": workflow_id, "workflow_name": workflow_name, "input": input }))
         .send()
         .await
         .map_err(|error| error.to_string())?;

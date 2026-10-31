@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use ferris_workflow_editor::{ValidationState, WorkflowChatMessage};
+use ows_workflow_editor::ValidationState;
 
 use crate::{
     Route,
@@ -9,6 +9,7 @@ use crate::{
     },
     pages::{
         OwsEditor,
+        WorkflowChatMessage,
         api::{read_workflow, save_workflow, validate_workflow, workflow_ai_chat},
         models::{DEFAULT_OWS, WorkflowPayload},
         shared::{Shell, pretty_json},
@@ -329,13 +330,6 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                 Icon { name: "download" }
                 "YAML"
             }
-            button {
-                class: "button button-quiet",
-                r#type: "button",
-                onclick: move |_| import_open.set(true),
-                Icon { name: "upload" }
-                "Import"
-            }
         }
     };
     let on_import = move |imported: ImportedWorkflow| {
@@ -475,6 +469,7 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                         workflow_name: breadcrumb_title.clone(),
                         initial_execution_id: initial_execution_id.clone(),
                         on_open_settings: move |_| settings_open.set(true),
+                        on_import: move |_| import_open.set(true),
                         ai_messages: ai_messages(),
                         ai_busy: ai_busy(),
                         on_ai_chat,

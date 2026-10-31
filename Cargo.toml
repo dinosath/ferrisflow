@@ -17,7 +17,7 @@ overflow-checks = false
 
 [workspace]
 exclude = ["e2e"]
-members = ["migration", "crates/workflow-editor"]
+members = ["migration"]
 default-members = [".", "migration"]
 
 
@@ -32,7 +32,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.9"
-ferris-workflow-editor = { path = "crates/workflow-editor" }
+ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 automod.workspace = true
@@ -47,9 +47,9 @@ sea-orm = { version = "2.0", features = ["sqlx-postgres", "sqlx-sqlite", "runtim
 tower-http = { version = "0.6", features = ["set-header"] }
 validator = { version = "0.21", features = ["derive"] }
 serverless_workflow_core = { git = "https://github.com/open-workflow-specification/sdk-rust", rev = "12d7c5b2ef76bc5186f949e3a3d649db6a3f3ba5" }
-ows-runtime-dsl = { git = "https://github.com/dinosath/ows-runtime-rust", rev = "cf72d94687db54d6de8ff0806bbaf2c37af2e037" }
-ows-runtime = { git = "https://github.com/dinosath/ows-runtime-rust", rev = "cf72d94687db54d6de8ff0806bbaf2c37af2e037" }
-ows-runtime-core = { git = "https://github.com/dinosath/ows-runtime-rust", rev = "cf72d94687db54d6de8ff0806bbaf2c37af2e037" }
+ows = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
+ows-core = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
+ows-dsl = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
 url = "2"
 
 connectrpc = { version = "0.9.1", default-features = false, features = ["json", "axum"] }

@@ -25,10 +25,10 @@ pub fn parse_ows_document(raw: &str) -> Result<WorkflowDefinition, String> {
 
     let definition_json = serde_json::to_string(&definition_value)
         .map_err(|error| format!("could not read OWS definition: {error}"))?;
-    let definition = ows_runtime_dsl::from_json(&definition_json)
+    let definition = ows_dsl::from_json(&definition_json)
         .map_err(|error| format!("definition is not valid OWS: {error}"))?;
 
-    let report = ows_runtime_dsl::validate(&definition);
+    let report = ows_dsl::validate(&definition);
     if !report.is_valid() {
         return Err(report
             .issues
