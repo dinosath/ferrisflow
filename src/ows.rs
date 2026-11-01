@@ -168,12 +168,25 @@ fn validate_rest_api(document: &Value) -> Result<(), String> {
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| "document.metadata.rest_api/path is required".to_string())?;
-    if !path.starts_with('/') || path.starts_with("//") || path.contains('?') || path.contains('#')
+    if !path.starts_with("/api/") || path.contains('?') || path.contains('#')
     {
         return Err(
-            "document.metadata.rest_api/path must be an absolute path without query or fragment"
-                .into(),
+            "document.metadata.rest_api/path must start with /api/ and cannot contain a query or fragment".into(),
         );
+    }
+    let reserved_paths = [
+        "/api/workflows",
+        "/api/workflows/validate",
+        "/api/workflows/execute",
+        "/api/database/tables",
+        "/api/database/events/listen",
+        "/api/executions",
+    ];
+    let workflow_id_route = path
+        .strip_prefix("/api/workflows/")
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'));
+    if reserved_paths.contains(&path) || workflow_id_route {
+        return Err("document.metadata.rest_api/path conflicts with a built-in API route".into());
     }
     Ok(())
 }

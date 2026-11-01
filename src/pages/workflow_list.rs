@@ -251,7 +251,7 @@ fn WorkflowRestApiDialog(
                     div { p { class: "workflow-editor__eyebrow", "WORKFLOW SETTINGS" } h2 { "REST API" } }
                     button { class: "workflow-editor__icon-action", r#type: "button", aria_label: "Close REST API settings", onclick: move |_| on_close.call(()), Icon { name: "close" } }
                 }
-                p { class: "workflow-settings-dialog__description", "Expose this workflow through an HTTP endpoint. The request body is passed to the workflow as request.body." }
+                p { class: "workflow-settings-dialog__description", "Expose this workflow as a REST endpoint. The request is available to workflow tasks under request, including its method, path, query, headers, and body." }
                 label { class: "workflow-settings-dialog__toggle",
                     input { r#type: "checkbox", checked: enabled(), onchange: move |event| enabled.set(event.checked()) }
                     span { "Expose via REST API" }

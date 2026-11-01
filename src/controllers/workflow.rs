@@ -612,7 +612,9 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/api/workflows/execute", axum::routing::post(execute_ows))
         .route("/api/executions", get(list_executions).post(execute_saved_workflow))
         .route("/api/workflows/{id}", get(read_one).put(update).delete(remove))
-        .fallback(dispatch_rest_api);
+        // Keep custom workflow endpoints inside the API namespace so this
+        // catch-all route can coexist with Dioxus's page-rendering fallback.
+        .route("/api/{*path}", axum::routing::any(dispatch_rest_api));
 
     router
 }

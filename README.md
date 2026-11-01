@@ -95,6 +95,26 @@ PUT    /api/workflows/:id
 DELETE /api/workflows/:id
 ```
 
+### Expose a workflow as a REST endpoint
+
+Open the workflow's **REST API settings**, enable **Expose via REST API**, and
+choose an HTTP method and path under `/api/` (for example, `POST /api/orders`).
+Save the workflow and make sure it is active. Requests to the endpoint execute
+the workflow synchronously and return a JSON execution result.
+
+The request is passed to the workflow as `request`, with `method`, `path`, the
+raw `query` string, `headers`, and parsed JSON `body` fields. For example:
+
+```sh
+curl -X POST http://localhost:8080/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"customer_id":42,"items":[{"sku":"A-1","quantity":2}]}'
+```
+
+Custom endpoints use the same `/api/` namespace as the service API. Built-in
+API paths are reserved. The workflow's OWS metadata stores the exposure under
+`document.metadata.rest_api`.
+
 The same operations are available over ConnectRPC at
 `/entities.v1.EntityService/Execute` using `entity: "Workflow"`. ConnectRPC
 dispatches in-process to these handlers, so OWS validation and persistence are

@@ -146,7 +146,7 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
     let initial_rest_api = loaded_workflow
         .as_ref()
         .map(|item| rest_api_settings(&item.definition_json, Some(item.id)))
-        .unwrap_or_else(|| (false, "POST".into(), "/api/workflows/run".into()));
+        .unwrap_or_else(|| (false, "POST".into(), "/api/workflows/run/new".into()));
     let mut rest_api_enabled = use_signal(|| initial_rest_api.0);
     let mut rest_api_method = use_signal(|| initial_rest_api.1.clone());
     let mut rest_api_path = use_signal(|| initial_rest_api.2.clone());
