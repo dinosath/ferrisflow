@@ -1,38 +1,83 @@
-name: ci
+name: Docker images
 
 on:
   workflow_dispatch:
   pull_request:
   push:
-    tags: ["*"]
-    branches: ["main"]
+    branches: ["**"]
+    tags: ["v*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  ci:
-    name: CI (${{ matrix.variant }})
+  build:
+    name: Build ${{ matrix.target }} image
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
-        variant: [rest, rest-jwt, rest-shadcn, rest-leptos, grpc, rest-rls, axum-diesel, axum-toasty, topcoat-toasty]
+        target: [server, frontend, fullstack]
     steps:
-      - uses: actions/checkout@v5
-      - uses: jdx/mise-action@v3
-        with:
-          cache_key: "mise-${{ matrix.variant }}"
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            generated/${{ matrix.variant }}/target/
-          key: ${{ runner.os }}-cargo-${{ matrix.variant }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Check out source
+        uses: actions/checkout@v5
 
-      - run: mise run ${{ matrix.variant }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Require Docker Hardened Images credentials when publishing
+        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && (env.DOCKERHUB_USERNAME == '' || env.DOCKERHUB_TOKEN == '')
+        run: |
+          echo "::error::Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets to publish the DHI-based images."
+          exit 1
+
+      - name: Log in to Docker Hardened Images
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ferris-workflow-${{ matrix.target }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          build-args: |
+            STATIC_RUNTIME_IMAGE=${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' && 'dhi.io/static:20261020-alpine3.23' || 'gcr.io/distroless/static-debian13:nonroot' }}
+          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
