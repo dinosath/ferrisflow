@@ -120,6 +120,36 @@ The same operations are available over ConnectRPC at
 dispatches in-process to these handlers, so OWS validation and persistence are
 identical across both protocols.
 
+### Container images
+
+CI builds three images and publishes them to GitHub Container Registry on
+`main` and version tags:
+
+```text
+ghcr.io/dinosath/ferris-workflow-server    # API server only
+ghcr.io/dinosath/ferris-workflow-frontend  # Static web app with /api proxy
+ghcr.io/dinosath/ferris-workflow-fullstack # Web app and API in one server
+```
+
+The server and fullstack images use `/data` for the default SQLite database;
+mount persistent storage there or set `DATABASE_URL` for an external database.
+The frontend image proxies `/api/` to `FERRIS_WORKFLOW_API_URL`, which defaults
+to `http://server:8080` for a Docker Compose service named `server`.
+
+Build an individual image locally with BuildKit:
+
+```sh
+docker build --target server -t ferris-workflow-server .
+docker build --target frontend -t ferris-workflow-frontend .
+docker build --target fullstack -t ferris-workflow-fullstack .
+```
+
+The server and fullstack targets use Docker Hardened Images. Authenticate with
+`docker login dhi.io` before building locally. Configure the repository secrets
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` for CI to publish the DHI-based
+images. Builds without those credentials use the distroless static runtime for
+validation; publishing from `main` or a version tag requires the credentials.
+
 `definition_json` must contain a canonical OWS document. The service accepts
 JSON (and YAML input for normalization), parses it with the official
 `serverless_workflow_core` model, and stores normalized JSON. A non-persisting

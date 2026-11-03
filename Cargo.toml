@@ -6,7 +6,7 @@ license = "MIT"
 publish = false
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
@@ -14,6 +14,10 @@ strip = "symbols"
 debug = false
 incremental = false
 overflow-checks = false
+
+[profile.web-release]
+inherits = "release"
+strip = "none"
 
 [workspace]
 exclude = ["e2e"]
@@ -24,26 +28,25 @@ default-members = [".", "migration"]
 [workspace.dependencies]
 automod = "1.0"
 sea-orm-migration = { version = "2.0", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"], default-features = false }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 [dependencies]
-dioxus = { version = "0.7.10", features = ["fullstack", "router"] }
-dioxus-icons = "0.1"
+dioxus = { version = "0.7.10", features = ["router"], optional = true }
+dioxus-icons = { version = "0.1", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.9"
-ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
+ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dioxus = { version = "0.7.10", default-features = false, features = ["fullstack"], optional = true }
 automod.workspace = true
 axum = { version = "0.8" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1.0"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"] }
 chrono = { version = "0.4", features = ["serde"] }
 migration = { path = "migration" }
-serde_with = "3.16"
-sea-orm = { version = "2.0", features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-json", "with-uuid", "schema-sync", "entity-registry", "rbac"], default-features = false }
+sea-orm = { version = "2.0", features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "schema-sync"], default-features = false }
 tower-http = { version = "0.6", features = ["set-header"] }
 validator = { version = "0.21", features = ["derive"] }
 serverless_workflow_core = { git = "https://github.com/open-workflow-specification/sdk-rust", rev = "12d7c5b2ef76bc5186f949e3a3d649db6a3f3ba5" }
@@ -56,7 +59,6 @@ connectrpc = { version = "0.9.1", default-features = false, features = ["json", 
 buffa = { version = "0.9", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
 tokio.workspace = true
-mimalloc = { version = "0.1.50", features = ["secure"] }
 [dev-dependencies]
 axum-test = "21.1"
 testcontainers = "0.27"
@@ -70,9 +72,11 @@ wasm-bindgen = "0.2"
 
 [features]
 default = ["web"]
-web = ["dioxus/web"]
-mobile = ["dioxus/mobile"]
-server = ["dioxus/server"]
+ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
+web = ["ui", "dioxus/web"]
+mobile = ["ui", "dioxus/mobile"]
+server = ["dep:dioxus", "dioxus/fullstack", "dioxus/server"]
+api-server = []
 
 [build-dependencies]
 connectrpc-build = "0.9.0"

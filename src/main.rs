@@ -1,36 +1,56 @@
 #![allow(non_snake_case)]
 
+#[cfg(feature = "ui")]
 use dioxus::prelude::*;
-#[cfg(not(target_arch = "wasm32"))]
-use mimalloc::MiMalloc;
 
+#[cfg(feature = "ui")]
 mod components;
+#[cfg(feature = "ui")]
 mod pages;
 
+#[cfg(feature = "ui")]
 use pages::{
     AiSettings, Credentials, DataTables, EditWorkflow, Executions, NewWorkflow, Overview, Variables,
     ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
-#[global_allocator]
-#[cfg(not(target_arch = "wasm32"))]
-static GLOBAL: MiMalloc = MiMalloc;
+#[cfg(feature = "api-server")]
+#[tokio::main]
+async fn main() {
+    use tracing_subscriber::EnvFilter;
 
+    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
+    let state = ferris_workflow::app_state::AppState::new().await;
+    let api = ferris_workflow::build_router(state);
+    let ip = std::env::var("IP").unwrap_or_else(|_| "0.0.0.0".to_owned());
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_owned())
+        .parse::<u16>()
+        .expect("PORT must be a valid port number");
+    let listener = tokio::net::TcpListener::bind((ip.as_str(), port))
+        .await
+        .expect("failed to bind server listener");
+
+    axum::serve(listener, api).await.expect("server failed");
+}
+
+#[cfg(all(feature = "server", not(feature = "api-server")))]
 fn main() {
-    #[cfg(feature = "server")]
     dioxus::serve(|| async move {
         let state = ferris_workflow::app_state::AppState::new().await;
         let api = ferris_workflow::build_router(state);
-        // The Dioxus router has its own fallback for rendering app routes.
-        // Keep it and merge only the API routes, otherwise Axum panics because
-        // both routers define a fallback.
+        // The Dioxus router renders app routes; merge in the API routes
+        // while keeping the UI renderer as the final fallback.
         Ok(dioxus::server::router(app).merge(api.reset_fallback()))
     });
+}
 
-    #[cfg(not(feature = "server"))]
+#[cfg(all(not(feature = "api-server"), not(feature = "server")))]
+fn main() {
     dioxus::launch(app);
 }
 
+#[cfg(feature = "ui")]
 fn app() -> Element {
     let tenant = use_signal(|| "Ferrisflow".to_string());
     use_context_provider(|| tenant);
@@ -47,6 +67,7 @@ fn app() -> Element {
 }
 
 #[derive(Clone, Routable, Debug, PartialEq)]
+#[cfg(feature = "ui")]
 enum Route {
     #[route("/")]
     Overview {},
