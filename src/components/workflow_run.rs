@@ -130,6 +130,8 @@ pub fn WorkflowRunDialog(
                                                     option { value: "", "Choose…" }
                                                     for item in options { if let Some(choice) = item.as_str() { option { value: "{choice}", "{choice}" } } }
                                                 }
+                                            } else if kind == "object" || kind == "array" {
+                                                textarea { class: "workflow-run-input", rows: "5", value: "{value}", placeholder: "{placeholder}", disabled: running(), spellcheck: "false", oninput: move |event| input_json.set(set_input_field(&input_json(), &key, event.value(), &kind)) }
                                             } else {
                                                 input { r#type: if kind == "number" || kind == "integer" { "number" } else { "text" }, value: "{value}", placeholder: "{placeholder}", disabled: running(), oninput: move |event| input_json.set(set_input_field(&input_json(), &key, event.value(), &kind)) }
                                             }
@@ -210,6 +212,7 @@ fn set_input_field(raw: &str, field: &str, value: String, kind: &str) -> String 
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         "boolean" => serde_json::Value::Bool(value == "true"),
+        "object" | "array" => serde_json::from_str(&value).unwrap_or(serde_json::Value::Null),
         _ => serde_json::Value::String(value),
     };
     serde_json::to_string(&input).unwrap_or_else(|_| "{}".into())

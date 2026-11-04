@@ -46,41 +46,6 @@ impl AppState {
             .await
             .expect("could not check built-in content types plugin")
         {
-            if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&row.manifest_json) {
-                if let (Some(new_views), Some(old_views)) = (
-                    manifest.get_mut("views").and_then(serde_json::Value::as_array_mut),
-                    existing.get("views").and_then(serde_json::Value::as_array),
-                ) {
-                    for view in new_views {
-                        let id = view.get("id").and_then(serde_json::Value::as_str);
-                        if let Some(old_view) = old_views
-                            .iter()
-                            .find(|old| old.get("id").and_then(serde_json::Value::as_str) == id)
-                        {
-                            if let Some(old_config) = old_view.get("config") {
-                                if let Some(old_list) = old_config.get("listView") {
-                                    for key in ["api", "columns", "settings"] {
-                                        if let Some(value) = old_list.get(key) {
-                                            view["config"]["listView"][key] = value.clone();
-                                        }
-                                    }
-                                    if let Some(by_type) =
-                                        old_list.get("byType").filter(|by_type| by_type.is_object())
-                                    {
-                                        view["config"]["listView"]["byType"] = by_type.clone();
-                                    }
-                                }
-                                if let Some(form_view) = old_config
-                                    .get("formView")
-                                    .filter(|form_view| form_view.is_object())
-                                {
-                                    view["config"]["formView"] = form_view.clone();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             let mut plugin = row.into_active_model();
             plugin.manifest_json = Set(manifest.to_string());
             plugin.enabled = Set(true);
@@ -162,21 +127,6 @@ impl AppState {
             workflow.update(&db).await.expect("could not disable legacy content CRUD workflow");
         }
         let state = Self { db };
-        let content_types = crate::models::content_type::Entity::find()
-            .all(&state.db)
-            .await
-            .expect("could not load content types for view generation");
-        for content_type in content_types {
-            if content_type.uid == "core.page" {
-                continue;
-            }
-            if let Err(error) =
-                crate::controllers::content_views::generate_for_type(&state.db, &content_type.uid)
-                    .await
-            {
-                tracing::warn!(uid = %content_type.uid, %error, "could not regenerate generated content type views");
-            }
-        }
         if let Err(error) = crate::db_triggers::reconcile(&state).await {
             tracing::warn!(%error, "could not install configured database triggers");
         }

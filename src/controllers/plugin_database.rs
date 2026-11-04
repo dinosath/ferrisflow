@@ -28,21 +28,6 @@ pub(crate) async fn execute<C: ConnectionTrait>(
 ) -> Result<Value, String> {
     match resource {
         "content-types" => execute_content_type(db, operation, uid, input).await,
-        "content-views" => {
-            let uid = uid
-                .or_else(|| input.get("uid").and_then(Value::as_str))
-                .ok_or_else(|| "content type UID is required".to_owned())?;
-            match operation {
-                "generate" => {
-                    if uid == "core.page" {
-                        return Err("core.page is reserved for standalone page storage".into());
-                    }
-                    crate::controllers::content_views::generate_for_type(db, uid).await?;
-                    Ok(serde_json::json!({"generated":true,"uid":uid}))
-                }
-                _ => Err(format!("unsupported content view operation '{operation}'")),
-            }
-        }
         "content-records" => {
             let uid = uid.ok_or_else(|| "content type UID is required".to_owned())?;
             execute_record(db, uid, operation, id, input).await
@@ -89,7 +74,6 @@ async fn execute_content_type<C: ConnectionTrait>(
             .insert(db)
             .await
             .map_err(db_error)?;
-            crate::controllers::content_views::generate_for_type(db, uid).await?;
             type_value(row)
         }
         "update" => {
@@ -109,18 +93,12 @@ async fn execute_content_type<C: ConnectionTrait>(
             row.schema_json = Set(serde_json::to_string(&schema).map_err(db_error)?);
             row.updated_at = Set(chrono::Utc::now().naive_utc());
             let row = row.update(db).await.map_err(db_error)?;
-            crate::controllers::content_views::generate_for_type(db, &uid).await?;
             type_value(row)
         }
         "delete" => {
             let uid = required_uid(path_uid, &input)?;
             content_entry::Entity::delete_many()
                 .filter(content_entry::Column::ContentTypeUid.eq(uid.clone()))
-                .exec(db)
-                .await
-                .map_err(db_error)?;
-            crate::models::content_view::Entity::delete_many()
-                .filter(crate::models::content_view::Column::ContentTypeUid.eq(uid.clone()))
                 .exec(db)
                 .await
                 .map_err(db_error)?;

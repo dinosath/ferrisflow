@@ -73,11 +73,34 @@
           "ui": {
             "input_schema": {
               "type": "object",
-              "properties": {}
+              "required": [
+                "uid",
+                "display_name",
+                "schema"
+              ],
+              "properties": {
+                "uid": {
+                  "type": "string",
+                  "title": "API ID",
+                  "placeholder": "article"
+                },
+                "display_name": {
+                  "type": "string",
+                  "title": "Display name",
+                  "placeholder": "Article"
+                },
+                "schema": {
+                  "type": "object",
+                  "title": "Fields schema"
+                }
+              }
             },
             "view": {
-              "type": "json",
-              "config": {}
+              "type": "form",
+              "config": {
+                "title": "Content type",
+                "description": "Define the collection and its fields."
+              }
             }
           }
         }
@@ -159,11 +182,34 @@
           "ui": {
             "input_schema": {
               "type": "object",
-              "properties": {}
+              "required": [
+                "uid",
+                "display_name",
+                "schema"
+              ],
+              "properties": {
+                "uid": {
+                  "type": "string",
+                  "title": "API ID",
+                  "placeholder": "article"
+                },
+                "display_name": {
+                  "type": "string",
+                  "title": "Display name",
+                  "placeholder": "Article"
+                },
+                "schema": {
+                  "type": "object",
+                  "title": "Fields schema"
+                }
+              }
             },
             "view": {
-              "type": "json",
-              "config": {}
+              "type": "form",
+              "config": {
+                "title": "Content type",
+                "description": "Define the collection and its fields."
+              }
             }
           }
         }
@@ -443,19 +489,21 @@
   "menuItems": [
     {
       "label": "Content types",
-      "path": "/plugins/ferrisflow.content-types/views/content-manager",
+      "path": "/plugins/ferrisflow.content-types/pages/content-types",
       "icon": "table",
-      "view": "content-manager"
+      "page": "content-types"
     }
   ],
   "views": [
     {
-      "id": "content-manager",
-      "name": "Content manager",
-      "type": "collection-manager",
-      "route": "/plugins/ferrisflow.content-types/views/content-manager",
+      "id": "content-types-table",
+      "name": "Content types",
+      "type": "datatable",
       "dataSource": {
-        "type": "database.contentTypes"
+        "api": {
+          "method": "GET",
+          "path": "/api/content-type-registry"
+        }
       },
       "config": {
         "workflowNames": [
@@ -470,67 +518,41 @@
           "content-records-update",
           "content-records-delete"
         ],
-        "listView": {
-          "api": {
-            "method": "GET",
-            "path": "/api/content/{uid}"
+        "columns": [
+          {
+            "label": "Display name",
+            "mapping": "display_name"
           },
-          "columns": [
-            {
-              "name": "*",
-              "label": "{label}",
-              "mapping": "data.{name}",
-              "sortable": true,
-              "source": "contentType.fields"
-            },
-            {
-              "name": "id",
-              "label": "ID",
-              "mapping": "id",
-              "sortable": true
-            },
-            {
-              "name": "published",
-              "label": "Status",
-              "mapping": "published",
-              "sortable": true
+          {
+            "label": "API ID",
+            "mapping": "uid"
+          },
+          {
+            "label": "Created",
+            "mapping": "created_at"
+          }
+        ],
+        "createAction": {
+          "workflow": "content-types-create",
+          "input": {
+            "uid": "",
+            "display_name": "",
+            "schema": {
+              "fields": []
             }
-          ],
-          "settings": {
-            "enableSearch": true,
-            "enableFilters": true,
-            "enableBulkActions": false,
-            "entriesPerPage": 20,
-            "defaultSortAttribute": "id",
-            "defaultSortOrder": "desc"
-          },
-          "byType": {}
+          }
         },
-        "formView": {
-          "api": {
-            "create": {
-              "method": "POST",
-              "path": "/api/content/{uid}"
-            },
-            "update": {
-              "method": "PUT",
-              "path": "/api/content/{uid}/{id}"
-            }
-          },
-          "create": {
-            "title": "Create entry",
-            "submitLabel": "Create",
-            "fields": []
-          },
-          "update": {
-            "title": "Edit entry",
-            "submitLabel": "Save changes",
-            "fields": []
-          },
-          "byType": {}
+        "rowAction": {
+          "workflow": "content-types-update"
         }
-      },
-      "description": "Create content type definitions and manage content records through the plugin workflows."
+      }
+    }
+  ],
+  "pages": [
+    {
+      "id": "content-types",
+      "title": "Content types",
+      "view": "content-types-table"
     }
   ]
 }
