@@ -42,19 +42,8 @@ async fn update_plugin_view_config(
     State(state): State<AppState>, Path((uid, view_id)): Path<(String, String)>,
     Json(patch): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    let list_view = patch.get("listView").cloned();
-    let form_view = patch.get("formView").cloned();
-    if list_view.is_none() && form_view.is_none() {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "View config must include listView or formView settings",
-        ));
-    }
-    if let Some(config) = list_view.as_ref() {
-        validate_list_view_config(config)?;
-    }
-    if let Some(config) = form_view.as_ref() {
-        validate_form_view_config(config)?;
+    if !patch.is_object() || patch.as_object().is_some_and(|patch| patch.is_empty()) {
+        return Err(error(StatusCode::BAD_REQUEST, "View config patch must be a non-empty object"));
     }
     let row = plugin::Entity::find_by_id(uid)
         .one(&state.db)
@@ -63,8 +52,6 @@ async fn update_plugin_view_config(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "Plugin not found"))?;
     let mut manifest: Value = serde_json::from_str(&row.manifest_json)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let declared_workflows =
-        manifest.get("workflows").and_then(Value::as_array).cloned().unwrap_or_default();
     let views = manifest
         .get_mut("views")
         .and_then(Value::as_array_mut)
@@ -73,51 +60,15 @@ async fn update_plugin_view_config(
         .iter_mut()
         .find(|view| view.get("id").and_then(Value::as_str) == Some(&view_id))
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "Plugin view not found"))?;
-    let is_collection_manager =
-        view.get("dataSource").and_then(|source| source.get("type")).and_then(Value::as_str)
-            == Some("database.contentTypes");
-    if is_collection_manager {
-        if let Some(config) = list_view.as_ref() {
-            let api = config
-                .get("api")
-                .ok_or_else(|| error(StatusCode::BAD_REQUEST, "listView.api is required"))?;
-            validate_api_is_plugin_workflow(api, &declared_workflows)?;
-        }
-        if let Some(config) = form_view.as_ref() {
-            let api = config
-                .get("api")
-                .ok_or_else(|| error(StatusCode::BAD_REQUEST, "formView.api is required"))?;
-            for action in ["create", "update"] {
-                let action_api = api.get(action).ok_or_else(|| {
-                    error(StatusCode::BAD_REQUEST, format!("formView.api.{action} is required"))
-                })?;
-                validate_api_is_plugin_workflow(action_api, &declared_workflows)?;
-            }
-        }
-    }
     if !view.get("config").is_some_and(Value::is_object) {
         view["config"] = serde_json::json!({});
     }
-    let content_type_uid = patch.get("contentTypeUid").and_then(Value::as_str);
-    if let Some(list_view) = list_view {
-        if let Some(content_type_uid) = content_type_uid {
-            if !view["config"]["listView"].is_object() {
-                view["config"]["listView"] = serde_json::json!({});
-            }
-            view["config"]["listView"]["byType"][content_type_uid] = list_view;
-        } else {
-            view["config"]["listView"] = list_view;
-        }
-    }
-    if let Some(form_view) = form_view {
-        if let Some(content_type_uid) = content_type_uid {
-            if !view["config"]["formView"].is_object() {
-                view["config"]["formView"] = serde_json::json!({});
-            }
-            view["config"]["formView"]["byType"][content_type_uid] = form_view;
-        } else {
-            view["config"]["formView"] = form_view;
-        }
+    let config = view
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "View config must be an object"))?;
+    for (key, value) in patch.as_object().expect("patch object was checked") {
+        config.insert(key.clone(), value.clone());
     }
     let mut active = row.into_active_model();
     active.manifest_json =
@@ -128,134 +79,6 @@ async fn update_plugin_view_config(
     Ok(Json(
         serde_json::json!({"plugin":plugin.uid,"view":view_id,"config":plugin.manifest["views"].as_array().and_then(|views| views.iter().find(|view| view["id"] == view_id)).and_then(|view| view.get("config")).cloned().unwrap_or(Value::Null)}),
     ))
-}
-
-fn validate_list_view_config(config: &Value) -> ApiResult<()> {
-    let settings = config
-        .get("settings")
-        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "listView.settings is required"))?;
-    for key in ["enableSearch", "enableFilters", "enableBulkActions"] {
-        if settings.get(key).is_some_and(|value| !value.is_boolean()) {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                format!("listView.settings.{key} must be boolean"),
-            ));
-        }
-    }
-    if let Some(size) = settings.get("entriesPerPage") {
-        if !matches!(size.as_u64(), Some(10 | 20 | 50 | 100)) {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "entriesPerPage must be 10, 20, 50, or 100",
-            ));
-        }
-    }
-    if settings
-        .get("defaultSortOrder")
-        .is_some_and(|value| !matches!(value.as_str(), Some("asc" | "desc")))
-    {
-        return Err(error(StatusCode::BAD_REQUEST, "defaultSortOrder must be asc or desc"));
-    }
-    if let Some(api) = config.get("api") {
-        validate_plugin_view_api(api, "listView.api", &["GET"])?;
-    }
-    let uses_columns = config.get("columns").is_some();
-    let fields =
-        config
-            .get("columns")
-            .or_else(|| config.get("fields"))
-            .and_then(Value::as_array)
-            .ok_or_else(|| error(StatusCode::BAD_REQUEST, "listView.columns must be an array"))?;
-    for field in fields {
-        if field.get("name").and_then(Value::as_str).is_none_or(str::is_empty)
-            || field.get("label").and_then(Value::as_str).is_none_or(str::is_empty)
-            || (uses_columns
-                && field.get("mapping").and_then(Value::as_str).is_none_or(str::is_empty))
-            || field.get("sortable").is_some_and(|value| !value.is_boolean())
-        {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "Each list view column needs a name, label, data mapping, and boolean sortable setting",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_form_view_config(config: &Value) -> ApiResult<()> {
-    let api = config
-        .get("api")
-        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "formView.api is required"))?;
-    validate_plugin_view_api(
-        api.get("create").unwrap_or(&Value::Null),
-        "formView.api.create",
-        &["POST"],
-    )?;
-    validate_plugin_view_api(
-        api.get("update").unwrap_or(&Value::Null),
-        "formView.api.update",
-        &["PUT"],
-    )?;
-    for action in ["create", "update"] {
-        let form = config.get(action).ok_or_else(|| {
-            error(StatusCode::BAD_REQUEST, format!("formView.{action} is required"))
-        })?;
-        let fields = form.get("fields").and_then(Value::as_array).ok_or_else(|| {
-            error(StatusCode::BAD_REQUEST, format!("formView.{action}.fields must be an array"))
-        })?;
-        for field in fields {
-            if field.get("name").and_then(Value::as_str).is_none_or(str::is_empty)
-                || field.get("label").and_then(Value::as_str).is_none_or(str::is_empty)
-                || field.get("required").is_some_and(|value| !value.is_boolean())
-            {
-                return Err(error(
-                    StatusCode::BAD_REQUEST,
-                    "Each form field needs a name, label, and optional required flag",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_plugin_view_api(api: &Value, name: &str, methods: &[&str]) -> ApiResult<()> {
-    let method = api.get("method").and_then(Value::as_str).unwrap_or_default();
-    let path = api.get("path").and_then(Value::as_str).unwrap_or_default();
-    if !methods.iter().any(|allowed| method.eq_ignore_ascii_case(allowed))
-        || !path.starts_with('/')
-        || path.starts_with("//")
-        || path.contains("..")
-    {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            format!("{name} must use an allowed method and an app-relative path"),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_api_is_plugin_workflow(api: &Value, workflows: &[Value]) -> ApiResult<()> {
-    let method = api.get("method").and_then(Value::as_str).unwrap_or_default();
-    let path = api.get("path").and_then(Value::as_str).unwrap_or_default();
-    let is_declared = workflows.iter().any(|workflow| {
-        let rest = workflow
-            .get("document")
-            .and_then(|document| document.get("metadata"))
-            .and_then(|metadata| metadata.get("rest_api"));
-        rest.and_then(|rest| rest.get("enabled")).and_then(Value::as_bool) == Some(true)
-            && rest
-                .and_then(|rest| rest.get("method"))
-                .and_then(Value::as_str)
-                .is_some_and(|declared| declared.eq_ignore_ascii_case(method))
-            && rest.and_then(|rest| rest.get("path")).and_then(Value::as_str) == Some(path)
-    });
-    if !is_declared {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "Configured view API must match an enabled REST route declared by a plugin workflow",
-        ));
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -374,7 +197,7 @@ fn validate_manifest(manifest: &Value, files: &BTreeMap<String, Value>) -> ApiRe
     if meta.get("name").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) {
         return Err(error(StatusCode::BAD_REQUEST, "Plugin name is required"));
     }
-    for key in ["workflows", "menuItems", "menu_items", "views"] {
+    for key in ["workflows", "menuItems", "menu_items", "views", "pages"] {
         if manifest.get(key).is_some_and(|v| !v.is_array()) {
             return Err(error(StatusCode::BAD_REQUEST, format!("'{key}' must be an array")));
         }
@@ -453,6 +276,7 @@ fn validate_manifest(manifest: &Value, files: &BTreeMap<String, Value>) -> ApiRe
         ("workflows", manifest.get("workflows")),
         ("menuItems", manifest.get("menuItems").or_else(|| manifest.get("menu_items"))),
         ("views", manifest.get("views")),
+        ("pages", manifest.get("pages")),
         (
             "database.contentTypes",
             manifest
@@ -659,7 +483,7 @@ fn expand_package_resources(
     let root = manifest
         .as_object_mut()
         .ok_or_else(|| error(StatusCode::BAD_REQUEST, "Plugin manifest must be an object"))?;
-    for key in ["workflows", "menuItems", "menu_items", "views"] {
+    for key in ["workflows", "menuItems", "menu_items", "views", "pages"] {
         if let Some(items) = root.get(key).and_then(Value::as_array).cloned() {
             root.insert(key.to_owned(), Value::Array(expand_file_references(items, files)?));
         }
@@ -697,6 +521,7 @@ fn append_items(target: &mut Value, key: &str, source: Option<&Value>) {
 fn merge_plugin_resources(target: &mut Value, source: &Value) {
     append_items(target, "workflows", source.get("workflows"));
     append_items(target, "views", source.get("views"));
+    append_items(target, "pages", source.get("pages"));
     append_items(target, "menuItems", source.get("menuItems").or_else(|| source.get("menu_items")));
     if let Some(source_db) = source.get("database") {
         if !target.get("database").is_some_and(Value::is_object) {
