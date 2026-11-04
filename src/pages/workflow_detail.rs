@@ -10,7 +10,7 @@ use crate::{
 
 #[component]
 pub(crate) fn WorkflowDetail(id: i32) -> Element {
-    let workflow = use_resource(move || read_workflow(id));
+    let workflow = use_server_future(move || read_workflow(id))?;
     let navigator = use_navigator();
     let mut deleting = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);

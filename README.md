@@ -95,6 +95,74 @@ PUT    /api/workflows/:id
 DELETE /api/workflows/:id
 ```
 
+### Plugin-defined content types
+
+Content type screens, REST routes, and CRUD workflow definitions are declared
+by the built-in Content types plugin in
+`plugins/ferrisflow.content-types.json`. Its OWS workflows expose the schema
+registry at `/api/content-type-registry` and records at `/api/content/{uid}`.
+The plugin view lists its declared workflows and opens the standard workflow
+runner; its UI and API declarations do not require a dedicated page or route
+controller.
+
+### Plugins and workspace primitives
+
+Plugins are declarative packages. A manifest can include database content
+types, workflow definitions, menu items, saved views, and references to other
+plugins. Plugin files are JSON; resource arrays can include `{"$file":"..."}`
+entries that point into the package's `files` map. File references are relative
+to the package and cannot traverse parent folders. URL dependencies are fetched
+over HTTPS, checked against private/reserved network addresses, and composed
+into the parent package.
+
+Every inline or expanded plugin workflow is validated as an OWS workflow when
+the package is created, updated, or imported. The built-in Content types plugin
+ships real OWS CRUD workflows; their `call` tasks execute database operations
+through Ferrisflow's content database functions.
+
+The same package can be stored as one manifest:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "acme.inventory",
+  "name": "Inventory",
+  "version": "1.0.0",
+  "plugins": [{"file": "plugins/audit.json"}],
+  "database": {"contentTypes": [{"$file": "database/products.json"}]},
+  "workflows": [{"$file": "workflows/reorder.json"}],
+  "menuItems": [{"label": "Products", "path": "/content-types", "icon": "table"}],
+  "views": [{"$file": "views/products.json"}]
+}
+```
+
+Or as a bundle with a manifest file and resource files:
+
+```json
+{
+  "entry": "plugin.json",
+  "files": {
+    "plugin.json": "{\"id\":\"acme.inventory\",\"name\":\"Inventory\",\"version\":\"1.0.0\",\"database\":{\"contentTypes\":[{\"$file\":\"database/products.json\"}]},\"workflows\":[],\"menuItems\":[],\"views\":[]}",
+    "database/products.json": "[{\"uid\":\"products\",\"display_name\":\"Products\",\"schema\":{\"fields\":[{\"name\":\"name\",\"label\":\"Name\",\"type\":\"text\",\"required\":true}]}}]"
+  }
+}
+```
+
+Manage packages through **Plugins** or the REST API:
+
+```text
+GET/POST       /api/plugins
+GET/PUT/DELETE /api/plugins/:id
+PUT            /api/plugins/:id/enabled
+POST           /api/plugins/import      {"url":"https://…/plugin.json"}
+GET            /api/plugins/menu-items
+```
+
+Enabled plugin menu items open the view declared by that plugin. Plugin
+packages are stored as declarative bundles; their content types, workflows,
+and views remain available in the package manifest for inspection and
+composition.
+
 ### Expose a workflow as a REST endpoint
 
 Open the workflow's **REST API settings**, enable **Expose via REST API**, and

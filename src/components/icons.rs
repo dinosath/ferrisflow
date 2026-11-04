@@ -7,9 +7,10 @@ use dioxus_icons::lucide::{
     chevrons_right::ChevronsRight, circle_check::CircleCheck, circle_minus::CircleMinus,
     circle_question_mark::CircleQuestionMark, clock::Clock, command::Command, download::Download,
     ellipsis::Ellipsis, file_text::FileText, history::History, kanban::Kanban, key_round::KeyRound,
-    layout_dashboard::LayoutDashboard, list::List, pencil::Pencil, play::Play, plus::Plus,
-    save::Save, search::Search, settings::Settings, sliders_horizontal::SlidersHorizontal,
-    sparkles::Sparkles, table::Table, trash_2::Trash2, upload::Upload, workflow::Workflow, x::X,
+    layout_dashboard::LayoutDashboard, list::List, pencil::Pencil, play::Play, plug::Plug,
+    plus::Plus, save::Save, search::Search, settings::Settings,
+    sliders_horizontal::SlidersHorizontal, sparkles::Sparkles, table::Table, trash_2::Trash2,
+    upload::Upload, workflow::Workflow, x::X,
 };
 
 /// Reuses the project's Lucide icon set through semantic names used by the UI.
@@ -44,6 +45,7 @@ pub fn Icon(name: &'static str) -> Element {
         "plus" => rsx! { Plus { size: 16, class: "ui-icon" } },
         "pencil" => rsx! { Pencil { size: 16, class: "ui-icon" } },
         "play" => rsx! { Play { size: 16, class: "ui-icon" } },
+        "plug" => rsx! { Plug { size: 16, class: "ui-icon" } },
         "search" => rsx! { Search { size: 16, class: "ui-icon" } },
         "save" => rsx! { Save { size: 16, class: "ui-icon" } },
         "settings" => rsx! { Settings { size: 16, class: "ui-icon" } },

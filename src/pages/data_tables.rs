@@ -30,7 +30,7 @@ struct CustomView {
 
 #[component]
 pub(crate) fn DataTables() -> Element {
-    let workflows = use_resource(list_workflows);
+    let workflows = use_server_future(list_workflows)?;
     let mut view = use_signal(|| DataView::Table);
     let selected_id = use_signal(|| None::<i32>);
     let mut search = use_signal(String::new);

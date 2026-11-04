@@ -1,5 +1,8 @@
-mod health;
 pub mod ai;
+pub mod content_views;
+mod health;
+mod plugin_database;
+pub mod plugins;
 pub mod workflow;
 
 use crate::app_state::AppState;
@@ -19,4 +22,6 @@ pub fn routes() -> Router<AppState> {
             axum::routing::put(ai::update_provider).delete(ai::delete_provider),
         )
         .merge(workflow::routes())
+        .merge(plugins::routes())
+        .merge(content_views::routes())
 }

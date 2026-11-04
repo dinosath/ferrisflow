@@ -19,6 +19,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing::debug;
 use validator::Validate;
 /// Maximum number of items per page (hard cap).
@@ -358,6 +359,86 @@ pub async fn execute_ows(
     run_ows(&state, request).await
 }
 
+struct PluginDatabaseFunction(AppState);
+
+#[async_trait::async_trait]
+impl ows::service::FunctionInvoker for PluginDatabaseFunction {
+    async fn invoke(
+        &self, request: ows::service::FunctionRequest<'_>,
+    ) -> Result<serde_json::Value, ows_core::WorkflowError> {
+        let args = request.args;
+        let resource = args
+            .get("resource")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| database_function_error("resource is required"))?;
+        let operation = args
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| database_function_error("operation is required"))?;
+        let mut input = args.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
+        let mut params = serde_json::Map::new();
+        if let Some(rest_request) = input.get("request") {
+            if let Some(path_params) =
+                rest_request.get("params").and_then(serde_json::Value::as_object)
+            {
+                params.extend(path_params.clone());
+            }
+            input = rest_request
+                .get("body")
+                .filter(|body| !body.is_null())
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            if let Some(object) = input.as_object_mut() {
+                for (key, value) in params {
+                    object.entry(key).or_insert(value);
+                }
+            } else if !params.is_empty() {
+                input = serde_json::Value::Object(params);
+            }
+        }
+
+        let uid =
+            args.get("uid").and_then(serde_json::Value::as_str).map(str::to_owned).or_else(|| {
+                input.get("uid").and_then(serde_json::Value::as_str).map(str::to_owned)
+            });
+        let id = args
+            .get("id")
+            .and_then(|value| {
+                value.as_i64().or_else(|| value.as_str().and_then(|id| id.parse::<i64>().ok()))
+            })
+            .or_else(|| {
+                input.get("id").and_then(|value| {
+                    value.as_i64().or_else(|| value.as_str().and_then(|id| id.parse::<i64>().ok()))
+                })
+            })
+            .and_then(|id| i32::try_from(id).ok());
+        crate::controllers::plugin_database::execute(
+            &self.0.db,
+            resource,
+            operation,
+            uid.as_deref(),
+            id,
+            input,
+        )
+        .await
+        .map_err(|message| {
+            ows_core::WorkflowError::new(
+                ows_core::ErrorKind::Runtime,
+                ows_core::ProblemDetails::new("about:blank", "Database operation failed", 500)
+                    .with_detail(message),
+            )
+        })
+    }
+}
+
+fn database_function_error(message: &str) -> ows_core::WorkflowError {
+    ows_core::WorkflowError::new(
+        ows_core::ErrorKind::Runtime,
+        ows_core::ProblemDetails::new("about:blank", "Invalid database operation", 400)
+            .with_detail(message.to_owned()),
+    )
+}
+
 /// Dispatch configured REST exposure routes to their saved workflow.
 async fn dispatch_rest_api(
     State(state): State<AppState>, request: Request<Body>,
@@ -408,20 +489,20 @@ async fn dispatch_rest_api(
                 .get("method")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|value| value.eq_ignore_ascii_case(&method));
-            let path_matches =
-                exposure.get("path").and_then(serde_json::Value::as_str) == Some(path.as_str());
-            (enabled && method_matches && path_matches).then_some(workflow)
+            let path_params =
+                match_rest_path(exposure.get("path").and_then(serde_json::Value::as_str)?, &path)?;
+            (enabled && method_matches).then_some((workflow, definition, path_params))
         })
         .collect::<Vec<_>>();
 
-    let workflow = match matches.as_slice() {
+    let (workflow, _definition, path_params) = match matches.as_slice() {
         [] => {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({"error": "no active workflow exposes this REST route"})),
             ));
         }
-        [workflow] => workflow,
+        [matched] => matched,
         _ => {
             return Err((
                 StatusCode::CONFLICT,
@@ -433,10 +514,27 @@ async fn dispatch_rest_api(
     };
     run_ows(&state, ExecuteRequest {
         definition_json: workflow.definition_json.clone(),
-        input: Some(serde_json::json!({"request": {"method": method, "path": path, "query": query, "headers": headers, "body": body}})),
+        input: Some(serde_json::json!({"request": {"method": method, "path": path, "params": path_params, "query": query, "headers": headers, "body": body}})),
         workflow_id: Some(workflow.id),
         workflow_name: Some(workflow.name.clone()),
     }).await
+}
+
+fn match_rest_path(pattern: &str, path: &str) -> Option<std::collections::HashMap<String, String>> {
+    let pattern_parts = pattern.trim_matches('/').split('/').collect::<Vec<_>>();
+    let path_parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    if pattern_parts.len() != path_parts.len() {
+        return None;
+    }
+    let mut params = std::collections::HashMap::new();
+    for (pattern_part, path_part) in pattern_parts.into_iter().zip(path_parts) {
+        if pattern_part.starts_with('{') && pattern_part.ends_with('}') {
+            params.insert(pattern_part[1..pattern_part.len() - 1].to_owned(), path_part.to_owned());
+        } else if pattern_part != path_part {
+            return None;
+        }
+    }
+    Some(params)
 }
 
 pub(crate) async fn run_ows(
@@ -484,6 +582,10 @@ pub(crate) async fn run_ows(
         };
         let runtime = Runtime::builder()
             .with_policy(policy)
+            .register_function(
+                "ferrisflow.plugin.database",
+                Arc::new(PluginDatabaseFunction(state.clone())),
+            )
             .build()
             .map_err(|error| format!("could not start OWS runtime: {error}"))?;
         let workflow = runtime
@@ -496,7 +598,14 @@ pub(crate) async fn run_ows(
         let runtime_execution_id = handle.execution_id.clone();
         let outcome = match handle.wait().await {
             Ok(output) => (true, Some(output), None),
-            Err(error) => (false, None, Some(error.to_string())),
+            Err(error) => (
+                false,
+                None,
+                Some(match error.problem.detail.as_deref() {
+                    Some(detail) if !detail.is_empty() => format!("{error}: {detail}"),
+                    _ => error.to_string(),
+                }),
+            ),
         };
         let task_order = runtime.take_task_order();
         Ok::<_, String>((runtime_execution_id, outcome, task_order))

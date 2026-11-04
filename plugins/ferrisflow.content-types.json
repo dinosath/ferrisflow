@@ -1,0 +1,536 @@
+{
+  "schemaVersion": 1,
+  "id": "ferrisflow.content-types",
+  "name": "Content types",
+  "version": "1.0.0",
+  "description": "Define content schemas, manage records, and create CRUD workflows.",
+  "builtin": true,
+  "database": {
+    "contentTypes": []
+  },
+  "workflows": [
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-types-list",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "GET",
+            "path": "/api/content-type-registry"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "List content types",
+            "description": "List content type definitions",
+            "operation": "list"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-types",
+              "operation": "list",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-types-create",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "POST",
+            "path": "/api/content-type-registry"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Create content type",
+            "description": "Create content type definitions",
+            "operation": "create"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-types",
+              "operation": "create",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-types-read",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "GET",
+            "path": "/api/content-type-registry/{uid}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Read content type",
+            "description": "Read content type definitions",
+            "operation": "read"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-types",
+              "operation": "read",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-types-update",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "PUT",
+            "path": "/api/content-type-registry/{uid}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Update content type",
+            "description": "Update content type definitions",
+            "operation": "update"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-types",
+              "operation": "update",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-types-delete",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "DELETE",
+            "path": "/api/content-type-registry/{uid}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Delete content type",
+            "description": "Delete content type definitions",
+            "operation": "delete"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-types",
+              "operation": "delete",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-records-list",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "GET",
+            "path": "/api/content/{uid}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "List records",
+            "description": "List content records",
+            "operation": "list"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-records",
+              "operation": "list",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-records-create",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "POST",
+            "path": "/api/content/{uid}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Create record",
+            "description": "Create content records",
+            "operation": "create"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-records",
+              "operation": "create",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-records-read",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "GET",
+            "path": "/api/content/{uid}/{id}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Read record",
+            "description": "Read content records",
+            "operation": "read"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-records",
+              "operation": "read",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-records-update",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "PUT",
+            "path": "/api/content/{uid}/{id}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Update record",
+            "description": "Update content records",
+            "operation": "update"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-records",
+              "operation": "update",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-records-delete",
+        "version": "1.0.0",
+        "metadata": {
+          "rest_api": {
+            "enabled": true,
+            "method": "DELETE",
+            "path": "/api/content/{uid}/{id}"
+          },
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types",
+            "name": "Delete record",
+            "description": "Delete content records",
+            "operation": "delete"
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "properties": {}
+            },
+            "view": {
+              "type": "json",
+              "config": {}
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "pluginDatabaseAction": {
+            "call": "ferrisflow.plugin.database",
+            "with": {
+              "resource": "content-records",
+              "operation": "delete",
+              "input": "${ . }"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "menuItems": [
+    {
+      "label": "Content types",
+      "path": "/plugins/ferrisflow.content-types/views/content-manager",
+      "icon": "table",
+      "view": "content-manager"
+    }
+  ],
+  "views": [
+    {
+      "id": "content-manager",
+      "name": "Content manager",
+      "type": "collection-manager",
+      "route": "/plugins/ferrisflow.content-types/views/content-manager",
+      "dataSource": {
+        "type": "database.contentTypes"
+      },
+      "config": {
+        "workflowNames": [
+          "content-types-list",
+          "content-types-create",
+          "content-types-read",
+          "content-types-update",
+          "content-types-delete",
+          "content-records-list",
+          "content-records-create",
+          "content-records-read",
+          "content-records-update",
+          "content-records-delete"
+        ],
+        "listView": {
+          "api": {
+            "method": "GET",
+            "path": "/api/content/{uid}"
+          },
+          "columns": [
+            {
+              "name": "*",
+              "label": "{label}",
+              "mapping": "data.{name}",
+              "sortable": true,
+              "source": "contentType.fields"
+            },
+            {
+              "name": "id",
+              "label": "ID",
+              "mapping": "id",
+              "sortable": true
+            },
+            {
+              "name": "published",
+              "label": "Status",
+              "mapping": "published",
+              "sortable": true
+            }
+          ],
+          "settings": {
+            "enableSearch": true,
+            "enableFilters": true,
+            "enableBulkActions": false,
+            "entriesPerPage": 20,
+            "defaultSortAttribute": "id",
+            "defaultSortOrder": "desc"
+          },
+          "byType": {}
+        },
+        "formView": {
+          "api": {
+            "create": {
+              "method": "POST",
+              "path": "/api/content/{uid}"
+            },
+            "update": {
+              "method": "PUT",
+              "path": "/api/content/{uid}/{id}"
+            }
+          },
+          "create": {
+            "title": "Create entry",
+            "submitLabel": "Create",
+            "fields": []
+          },
+          "update": {
+            "title": "Edit entry",
+            "submitLabel": "Save changes",
+            "fields": []
+          },
+          "byType": {}
+        }
+      },
+      "description": "Create content type definitions and manage content records through the plugin workflows."
+    }
+  ]
+}

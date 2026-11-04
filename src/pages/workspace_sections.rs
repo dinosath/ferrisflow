@@ -12,8 +12,8 @@ use crate::components::icons::Icon;
 
 #[component]
 pub(crate) fn Executions() -> Element {
-    let executions = use_resource(list_executions);
-    let workflows = use_resource(list_workflows);
+    let executions = use_server_future(list_executions)?;
+    let workflows = use_server_future(list_workflows)?;
     let mut query = use_signal(String::new);
     let mut status_filter = use_signal(|| "all".to_string());
     let mut workflow_filter = use_signal(|| "all".to_string());

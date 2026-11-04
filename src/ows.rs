@@ -168,8 +168,7 @@ fn validate_rest_api(document: &Value) -> Result<(), String> {
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| "document.metadata.rest_api/path is required".to_string())?;
-    if !path.starts_with("/api/") || path.contains('?') || path.contains('#')
-    {
+    if !path.starts_with("/api/") || path.contains('?') || path.contains('#') {
         return Err(
             "document.metadata.rest_api/path must start with /api/ and cannot contain a query or fragment".into(),
         );

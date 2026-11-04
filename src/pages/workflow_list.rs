@@ -17,7 +17,7 @@ use crate::{
 
 #[component]
 pub(crate) fn WorkflowList() -> Element {
-    let mut workflows = use_resource(list_workflows);
+    let mut workflows = use_server_future(list_workflows)?;
     let mut query = use_signal(String::new);
     let mut import_open = use_signal(|| false);
     let mut import_error = use_signal(|| None::<String>);

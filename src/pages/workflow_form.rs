@@ -8,8 +8,7 @@ use crate::{
         ImportedWorkflow, WorkflowImportDialog, export_data_url, export_yaml_data_url,
     },
     pages::{
-        OwsEditor,
-        WorkflowChatMessage,
+        OwsEditor, WorkflowChatMessage,
         api::{read_workflow, save_workflow, validate_workflow, workflow_ai_chat},
         models::{DEFAULT_OWS, WorkflowPayload},
         shared::{Shell, pretty_json},
@@ -45,10 +44,7 @@ fn rest_api_settings(definition_json: &str, workflow_id: Option<i32>) -> (bool, 
 }
 
 fn apply_rest_api_settings(
-    definition_json: &str,
-    enabled: bool,
-    method: &str,
-    path: &str,
+    definition_json: &str, enabled: bool, method: &str, path: &str,
 ) -> String {
     let mut definition = serde_json::from_str::<serde_json::Value>(definition_json)
         .unwrap_or_else(|_| serde_json::json!({}));
@@ -75,11 +71,7 @@ fn workflow_display_settings(definition_json: &str) -> (bool, bool, String, Stri
 }
 
 fn apply_workflow_settings(
-    definition_json: &str,
-    show_text: bool,
-    show_icon: bool,
-    icon_mode: &str,
-    icon: &str,
+    definition_json: &str, show_text: bool, show_icon: bool, icon_mode: &str, icon: &str,
     hardware_button: &str,
 ) -> String {
     let mut definition = serde_json::from_str::<serde_json::Value>(definition_json)
@@ -97,6 +89,54 @@ fn apply_workflow_settings(
     serde_json::to_string_pretty(&definition).unwrap_or_else(|_| definition_json.to_string())
 }
 
+fn workflow_input_view_settings(definition_json: &str) -> (String, String, String) {
+    let definition = serde_json::from_str::<serde_json::Value>(definition_json).unwrap_or_default();
+    let ui = &definition["document"]["metadata"]["ui"];
+    let input_schema = ui
+        .get("input_schema")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}}));
+    let view_type = ui["view"]["type"].as_str().unwrap_or("json").to_string();
+    let view_config = ui["view"]["config"]
+        .as_object()
+        .map(|_| ui["view"]["config"].clone())
+        .unwrap_or_else(|| serde_json::json!({}));
+    (
+        serde_json::to_string_pretty(&input_schema).unwrap_or_else(|_| input_schema.to_string()),
+        view_type,
+        serde_json::to_string_pretty(&view_config).unwrap_or_else(|_| view_config.to_string()),
+    )
+}
+
+fn apply_workflow_input_view(
+    definition_json: &str, input_schema: &str, view_type: &str, view_config: &str,
+) -> Result<String, String> {
+    let schema: serde_json::Value = serde_json::from_str(input_schema)
+        .map_err(|error| format!("Input schema must be valid JSON: {error}"))?;
+    if !schema.is_object() || !schema.get("properties").is_some_and(serde_json::Value::is_object) {
+        return Err("Input schema must be a JSON object with a properties object".into());
+    }
+    if !matches!(view_type, "json" | "form" | "custom") {
+        return Err("Input view must be JSON, form, or custom".into());
+    }
+    let config: serde_json::Value = serde_json::from_str(view_config)
+        .map_err(|error| format!("Custom view configuration must be valid JSON: {error}"))?;
+    if !config.is_object() {
+        return Err("Custom view configuration must be a JSON object".into());
+    }
+    let mut definition = serde_json::from_str::<serde_json::Value>(definition_json)
+        .map_err(|error| format!("Workflow definition must be valid JSON: {error}"))?;
+    if !definition["document"]["metadata"].is_object() {
+        definition["document"]["metadata"] = serde_json::json!({});
+    }
+    definition["document"]["metadata"]["ui"] = serde_json::json!({
+        "input_schema": schema,
+        "view": {"type": view_type, "config": config}
+    });
+    serde_json::to_string_pretty(&definition).map_err(|error| error.to_string())
+}
+
 #[component]
 pub(crate) fn EditWorkflow(id: i32) -> Element {
     rsx! { WorkflowPage { workflow_id: Some(id), initial_execution_id: None } }
@@ -109,12 +149,12 @@ pub(crate) fn ViewWorkflowExecution(id: i32, execution_id: String) -> Element {
 
 #[component]
 fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) -> Element {
-    let workflow = use_resource(move || async move {
+    let workflow = use_server_future(move || async move {
         match workflow_id {
             Some(id) => read_workflow(id).await.map(Some),
             None => Ok(None),
         }
-    });
+    })?;
     let loaded_workflow = workflow().and_then(Result::ok).flatten();
     let navigator = use_navigator();
     let editing = workflow_id.is_some();
@@ -150,6 +190,19 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
     let mut rest_api_enabled = use_signal(|| initial_rest_api.0);
     let mut rest_api_method = use_signal(|| initial_rest_api.1.clone());
     let mut rest_api_path = use_signal(|| initial_rest_api.2.clone());
+    let initial_input_view = loaded_workflow
+        .as_ref()
+        .map(|item| workflow_input_view_settings(&item.definition_json))
+        .unwrap_or_else(|| {
+            (
+                "{\n  \"type\": \"object\",\n  \"properties\": {}\n}".into(),
+                "json".into(),
+                "{}".into(),
+            )
+        });
+    let mut input_schema_json = use_signal(|| initial_input_view.0.clone());
+    let mut input_view_type = use_signal(|| initial_input_view.1.clone());
+    let mut custom_view_json = use_signal(|| initial_input_view.2.clone());
     let initial_display = loaded_workflow
         .as_ref()
         .map(|item| workflow_display_settings(&item.definition_json))
@@ -177,11 +230,17 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                 version.set(item.version.to_string());
                 definition.set(pretty_json(&item.definition_json));
                 active.set(item.active);
-                let (enabled, method, path) = rest_api_settings(&item.definition_json, Some(item.id));
+                let (enabled, method, path) =
+                    rest_api_settings(&item.definition_json, Some(item.id));
                 rest_api_enabled.set(enabled);
                 rest_api_method.set(method);
                 rest_api_path.set(path);
-                let (show, icon_visible, mode, icon, button) = workflow_display_settings(&item.definition_json);
+                let (schema, view, config) = workflow_input_view_settings(&item.definition_json);
+                input_schema_json.set(schema);
+                input_view_type.set(view);
+                custom_view_json.set(config);
+                let (show, icon_visible, mode, icon, button) =
+                    workflow_display_settings(&item.definition_json);
                 show_text.set(show);
                 show_icon.set(icon_visible);
                 icon_mode.set(mode);
@@ -275,6 +334,15 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                     &workflow_icon(),
                     &hardware_button(),
                 );
+                let definition_json = match apply_workflow_input_view(
+                    &definition_json,
+                    &input_schema_json(),
+                    &input_view_type(),
+                    &custom_view_json(),
+                ) {
+                    Ok(definition) => definition,
+                    Err(message) => { error.set(Some(message)); saving.set(false); return; }
+                };
                 match validate_workflow(definition_json.clone()).await {
                     Ok(errors) if errors.is_empty() => {}
                     Ok(errors) => {
@@ -372,6 +440,7 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                             }
                             nav { class: "workflow-settings-tabs", aria_label: "Workflow settings tabs",
                                 button { class: if settings_tab() == "settings" { "workflow-settings-tab selected" } else { "workflow-settings-tab" }, r#type: "button", onclick: move |_| settings_tab.set("settings".into()), "Settings" }
+                                button { class: if settings_tab() == "inputs" { "workflow-settings-tab selected" } else { "workflow-settings-tab" }, r#type: "button", onclick: move |_| settings_tab.set("inputs".into()), "Inputs & views" }
                                 button { class: if settings_tab() == "hardware" { "workflow-settings-tab selected" } else { "workflow-settings-tab" }, r#type: "button", onclick: move |_| settings_tab.set("hardware".into()), "Hardware buttons" }
                             }
                             if settings_tab() == "settings" {
@@ -430,6 +499,26 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
                                         input { value: "{rest_api_path}", placeholder: "/api/workflows/my-workflow", oninput: move |event| rest_api_path.set(event.value()) }
                                     }
                                     p { class: "workflow-settings-dialog__hint", "Endpoint: {rest_api_method()} {rest_api_path()}" }
+                                }
+                            } else if settings_tab() == "inputs" {
+                                p { class: "workflow-settings-dialog__hint", "Describe the workflow input with a JSON Schema. A form view renders its properties when the workflow is run; custom view settings are stored with the workflow." }
+                                label { class: "field",
+                                    span { "Input view" }
+                                    select { value: "{input_view_type}", onchange: move |event| input_view_type.set(event.value()),
+                                        option { value: "json", "JSON editor" }
+                                        option { value: "form", "Generated form" }
+                                        option { value: "custom", "Custom view" }
+                                    }
+                                }
+                                label { class: "field",
+                                    span { "Input schema (JSON Schema)" }
+                                    textarea { rows: "12", spellcheck: "false", value: "{input_schema_json}", oninput: move |event| input_schema_json.set(event.value()) }
+                                }
+                                if input_view_type() == "custom" {
+                                    label { class: "field",
+                                        span { "Custom view configuration" }
+                                        textarea { rows: "8", spellcheck: "false", value: "{custom_view_json}", oninput: move |event| custom_view_json.set(event.value()) }
+                                    }
                                 }
                             } else {
                                 label { class: "field",
