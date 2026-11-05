@@ -34,7 +34,12 @@ async fn main() {
     axum::serve(listener, api).await.expect("server failed");
 }
 
-#[cfg(all(feature = "server", feature = "ui", not(feature = "api-server")))]
+#[cfg(all(
+    feature = "server",
+    feature = "ui",
+    not(feature = "api-server"),
+    not(target_arch = "wasm32")
+))]
 fn main() {
     dioxus::serve(|| async move {
         let state = ferris_workflow::app_state::AppState::new().await;
@@ -45,7 +50,11 @@ fn main() {
     });
 }
 
-#[cfg(all(feature = "ui", not(feature = "api-server"), not(feature = "server")))]
+#[cfg(all(
+    feature = "ui",
+    not(feature = "api-server"),
+    any(not(feature = "server"), target_arch = "wasm32")
+))]
 fn main() {
     dioxus::launch(app);
 }

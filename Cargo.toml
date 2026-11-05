@@ -47,7 +47,7 @@ serde_yaml = "0.9"
 ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-dioxus = { version = "0.7.10", default-features = false, features = ["fullstack"], optional = true }
+dioxus = { version = "0.7.10", default-features = false, features = ["fullstack", "server"], optional = true }
 automod.workspace = true
 axum = { version = "0.8" }
 tracing = "0.1"
@@ -84,7 +84,7 @@ ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
 web = ["ui", "dioxus/web"]
 mobile = ["ui", "dioxus/mobile"]
 server = []
-fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack", "dioxus/server"]
+fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack"]
 api-server = ["server"]
 
 [build-dependencies]
