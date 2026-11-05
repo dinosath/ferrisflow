@@ -90,7 +90,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [server, frontend, fullstack]
+        include:
+          - target: server
+            image: ferrisflow
+          - target: frontend
+            image: ferrisflow-frontend
+          - target: fullstack
+            image: ferrisflow-fullstack
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -118,7 +124,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/ferris-workflow-${{ matrix.target }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
