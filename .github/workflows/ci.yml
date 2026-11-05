@@ -47,17 +47,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
-      - name: Build server
-        run: cargo build --workspace --release --no-default-features --features server
-
       - name: Check server and compatibility alias feature sets
         run: cargo check --workspace --no-default-features --features api-server
 
       - name: Check web client feature set
         run: cargo check --workspace --no-default-features --features web
 
-      - name: Build fullstack app with its minimal feature set
-        run: cargo build --workspace --release --no-default-features --features fullstack
+      - name: Check fullstack feature set
+        run: cargo check --workspace --no-default-features --features fullstack
 
   helm:
     name: Package Helm chart
@@ -102,7 +99,25 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Restore Docker build mounts
+        id: docker-mount-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/docker-cache-${{ matrix.target }}
+          key: docker-mounts-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'migration/Cargo.toml', 'Dockerfile') }}
+          restore-keys: |
+            docker-mounts-${{ runner.os }}-${{ matrix.target }}-
+
+      - name: Inject Docker build mounts
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-dir: ${{ runner.temp }}/docker-cache-${{ matrix.target }}
+          dockerfile: Dockerfile
+          skip-extraction: ${{ steps.docker-mount-cache.outputs.cache-hit }}
 
       - name: Log in to Docker Hardened Images
         if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
