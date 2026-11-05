@@ -57,7 +57,7 @@ EXPOSE 8080
 FROM dioxus-builder AS fullstack-builder
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    dx build --platform web --fullstack true --profile web-release --no-default-features --features web \
+    dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack \
     && strip --strip-all target/dx/ferris-workflow/release/web/server \
     && mkdir -p /data
 

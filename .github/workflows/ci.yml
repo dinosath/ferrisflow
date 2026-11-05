@@ -1,4 +1,4 @@
-name: Docker images
+name: CI
 
 on:
   workflow_dispatch:
@@ -16,7 +16,71 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  conventional-commits:
+    name: Conventional Commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check pull request commits
+        uses: wagoid/commitlint-github-action@v6
+
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets
+
+      - name: Build server
+        run: cargo build --workspace --release --no-default-features --features server
+
+      - name: Check server and compatibility alias feature sets
+        run: cargo check --workspace --no-default-features --features api-server
+
+      - name: Check web client feature set
+        run: cargo check --workspace --no-default-features --features web
+
+      - name: Build fullstack app with its minimal feature set
+        run: cargo build --workspace --release --no-default-features --features fullstack
+
+  helm:
+    name: Package Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package chart
+        run: helm package ./helm --destination dist/artifacts
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferrisflow-helm-chart
+          path: dist/artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  container-images:
     name: Build ${{ matrix.target }} image
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -34,12 +98,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Require Docker Hardened Images credentials when publishing
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && (env.DOCKERHUB_USERNAME == '' || env.DOCKERHUB_TOKEN == '')
-        run: |
-          echo "::error::Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets to publish the DHI-based images."
-          exit 1
-
       - name: Log in to Docker Hardened Images
         if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
         uses: docker/login-action@v3
@@ -49,7 +107,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -65,9 +123,12 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-') }}
 
-      - name: Build and publish image
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -76,7 +137,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             STATIC_RUNTIME_IMAGE=${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' && 'dhi.io/static:20261020-alpine3.23' || 'gcr.io/distroless/static-debian13:nonroot' }}
-          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}
+          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.target }}

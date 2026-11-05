@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
+repository = "https://github.com/dinosath/ferrisflow"
+
+[package.metadata.dist]
+dist = true
 
 [profile.release]
 opt-level = "z"
@@ -18,6 +22,10 @@ overflow-checks = false
 [profile.web-release]
 inherits = "release"
 strip = "none"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [workspace]
 exclude = ["e2e"]
@@ -75,8 +83,9 @@ default = ["web"]
 ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
 web = ["ui", "dioxus/web"]
 mobile = ["ui", "dioxus/mobile"]
-server = ["dep:dioxus", "dioxus/fullstack", "dioxus/server"]
-api-server = []
+server = []
+fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack", "dioxus/server"]
+api-server = ["server"]
 
 [build-dependencies]
 connectrpc-build = "0.9.0"
