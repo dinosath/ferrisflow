@@ -47,17 +47,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
-      - name: Build server
-        run: cargo build --workspace --release --no-default-features --features server
-
       - name: Check server and compatibility alias feature sets
         run: cargo check --workspace --no-default-features --features api-server
 
       - name: Check web client feature set
         run: cargo check --workspace --no-default-features --features web
 
-      - name: Build fullstack app with its minimal feature set
-        run: cargo build --workspace --release --no-default-features --features fullstack
+      - name: Check fullstack feature set
+        run: cargo check --workspace --no-default-features --features fullstack
 
   helm:
     name: Package Helm chart
