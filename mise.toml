@@ -32,28 +32,28 @@ sources = ['.baker/answers.json']
 [tasks.frontend-dev]
 description = "Run the Dioxus web app and REST API"
 dir = "."
-run = "dx serve --fullstack"
+run = "dx serve --fullstack --features fullstack"
 
 [tasks.backend-dev]
-description = "Run the Dioxus app and REST API with local SQLite"
-run = "cargo run --features server"
+description = "Run the API server with local SQLite"
+run = "cargo run --no-default-features --features server"
 
 [tasks.dev]
 description = "Run the Dioxus web app and REST API"
 dir = "."
-run = "dx serve --fullstack"
+run = "dx serve --fullstack --features fullstack"
 
 
 
 [tasks.frontend-build]
 description = "Build the Dioxus web app and REST API"
-run = "cargo build --release --features server"
+run = "cargo build --release --no-default-features --features fullstack"
 
 
 
 [tasks.build]
 description = "Build the project"
-run = "cargo build --release --features server"
+run = "cargo build --release --no-default-features --features fullstack"
 depends = "frontend-build"
 
 [tasks.test]

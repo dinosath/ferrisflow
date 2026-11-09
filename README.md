@@ -18,16 +18,26 @@ from the same Axum server. The database file is `ferris-workflow.db` in the proj
 You can also start it directly:
 
 ```sh
-dx serve --fullstack
+dx serve --fullstack --features fullstack
 ```
 
-To run only the server and REST API (for example, while developing a mobile
-client), use a separate terminal:
+The Cargo `server` feature is API-only and deliberately does not enable the UI.
+For a standalone API server, run:
 
 ```sh
-mise run backend-dev
-# or: cargo run --features server
+cargo run --no-default-features --features server
 ```
+
+For a single process serving both the Dioxus UI and REST API, use the explicit
+`fullstack` feature:
+
+```sh
+cargo run --no-default-features --features fullstack
+```
+
+For Android or desktop-native UI development, run the API server separately
+with `server`, then launch the UI with the appropriate Dioxus CLI target and
+the `mobile` feature.
 
 ## Run on Android
 
@@ -204,6 +214,27 @@ mount persistent storage there or set `DATABASE_URL` for an external database.
 The frontend image proxies `/api/` to `FERRIS_WORKFLOW_API_URL`, which defaults
 to `http://server:8080` for a Docker Compose service named `server`.
 
+CI builds all three images for every pull request and branch push. It publishes
+them to GitHub Container Registry on `main` and on `v*` version tags. The same
+CI run tests and builds the Rust server variants and packages the Helm chart as
+a downloadable workflow artifact.
+
+Tagged releases also include a cargo-dist Linux archive and shell installer.
+The archive contains the `ferris-workflow` server executable and the Dioxus
+frontend files in a sibling `public/` directory; run the executable from the
+extracted directory to serve both the UI and API. The release build targets
+`x86_64-unknown-linux-gnu`.
+
+The cargo-dist workflow at `.github/workflows/release.yml` is generated from
+`dist-workspace.toml`. After changing the distribution configuration, run
+`dist generate --mode ci` to update it, then `dist generate --mode ci --check`
+to verify it is current. It runs the release plan on pull requests and builds,
+hosts, and announces artifacts when a version tag is pushed.
+
+The moving image tags are `edge` for `main`, `stable` and `latest` for stable
+version tags, and `beta` for prerelease tags such as `v0.2.0-rc.1`. GitHub
+prereleases older than 30 days are removed weekly along with their tags.
+
 Build an individual image locally with BuildKit:
 
 ```sh
@@ -212,11 +243,33 @@ docker build --target frontend -t ferris-workflow-frontend .
 docker build --target fullstack -t ferris-workflow-fullstack .
 ```
 
-The server and fullstack targets use Docker Hardened Images. Authenticate with
-`docker login dhi.io` before building locally. Configure the repository secrets
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` for CI to publish the DHI-based
-images. Builds without those credentials use the distroless static runtime for
-validation; publishing from `main` or a version tag requires the credentials.
+The server and fullstack targets use Docker Hardened Images when credentials are
+available. Authenticate with `docker login dhi.io` before building locally.
+Configure the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` for
+CI to use DHI; otherwise CI uses the distroless static runtime.
+
+### Releases
+
+Pull request commits must follow Conventional Commits, for example
+`feat: add a node editor` or `fix(api): handle empty input`. Commits that start
+with `feat`, `fix`, `perf`, `refactor`, or `revert` prepare a version and
+changelog update through release-plz. The generated release pull request runs
+the same CI checks as other pull requests. After it is merged, release-plz
+creates a version tag and GitHub release. Releases are git-only; no Cargo
+registry publishing is configured.
+
+To publish a temporary prerelease, set the version in the release PR to include
+a SemVer suffix such as `-alpha.1`, `-beta.1`, or `-rc.1`. release-plz marks
+that GitHub release as a prerelease. Temporary prereleases are retained for 30
+days before scheduled cleanup removes them.
+
+The release workflow needs a repository secret named `RELEASE_PLZ_TOKEN`. It
+must be a token with permission to create and update pull requests and push
+release tags. A personal access token or GitHub App token is needed so the
+release pull request and tags trigger their normal CI workflows. Configure the
+`main` branch ruleset to require the `Rust checks`, `Package Helm chart`,
+`Build server image`, `Build frontend image`, `Build fullstack image`, and
+`Conventional Commits` checks before merging.
 
 `definition_json` must contain a canonical OWS document. The service accepts
 JSON (and YAML input for normalization), parses it with the official

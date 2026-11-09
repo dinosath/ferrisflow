@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
+repository = "https://github.com/dinosath/ferrisflow"
+
+[package.metadata.dist]
+dist = true
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
@@ -18,6 +22,10 @@ overflow-checks = false
 [profile.web-release]
 inherits = "release"
 strip = "none"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [workspace]
 exclude = ["e2e"]
@@ -41,7 +49,7 @@ async-trait = "0.1"
 ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-dioxus = { version = "0.7.10", default-features = false, features = ["fullstack"], optional = true }
+dioxus = { version = "0.7.10", default-features = false, features = ["fullstack", "server"], optional = true }
 automod.workspace = true
 axum = { version = "0.8" }
 tracing = "0.1"
@@ -77,10 +85,11 @@ wasm-bindgen = "0.2"
 [features]
 default = ["web"]
 ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
-web = ["ui", "dioxus/web", "dioxus/fullstack"]
+web = ["ui", "dioxus/web"]
 mobile = ["ui", "dioxus/mobile"]
-server = ["ui", "dioxus/fullstack", "dioxus/server"]
-api-server = []
+server = []
+fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack"]
+api-server = ["server"]
 
 [build-dependencies]
 connectrpc-build = "0.9.0"

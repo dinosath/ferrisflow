@@ -15,7 +15,7 @@ use pages::{
     ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
-#[cfg(feature = "api-server")]
+#[cfg(any(feature = "api-server", all(feature = "server", not(feature = "ui"))))]
 #[tokio::main]
 async fn main() {
     use tracing_subscriber::EnvFilter;
@@ -35,7 +35,12 @@ async fn main() {
     axum::serve(listener, api).await.expect("server failed");
 }
 
-#[cfg(all(feature = "server", not(feature = "api-server")))]
+#[cfg(all(
+    feature = "server",
+    feature = "ui",
+    not(feature = "api-server"),
+    not(target_arch = "wasm32")
+))]
 fn main() {
     dioxus::serve(|| async move {
         let state = ferris_workflow::app_state::AppState::new().await;
@@ -46,10 +51,17 @@ fn main() {
     });
 }
 
-#[cfg(all(not(feature = "api-server"), not(feature = "server")))]
+#[cfg(all(
+    feature = "ui",
+    not(feature = "api-server"),
+    any(not(feature = "server"), target_arch = "wasm32")
+))]
 fn main() {
     dioxus::launch(app);
 }
+
+#[cfg(all(not(feature = "ui"), not(feature = "server"), not(feature = "api-server")))]
+compile_error!("Select a launch mode: web, server, or fullstack");
 
 #[cfg(feature = "ui")]
 fn app() -> Element {

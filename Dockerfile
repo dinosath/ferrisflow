@@ -15,15 +15,18 @@ FROM chef AS server-builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --release --no-default-features --features api-server --recipe-path recipe.json
+    --mount=type=cache,target=/app/target,sharing=locked \
+    CARGO_TARGET_DIR=/app/target cargo chef cook --release --no-default-features --features api-server --recipe-path recipe.json
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --locked --release --no-default-features --features api-server \
-    && mkdir -p /data
+    --mount=type=cache,target=/app/target,sharing=locked \
+    CARGO_TARGET_DIR=/app/target cargo build --locked --release --no-default-features --features api-server \
+    && mkdir -p /app/out /data \
+    && cp /app/target/release/ferris-workflow /app/out/ferris-workflow
 
 FROM ${STATIC_RUNTIME_IMAGE} AS server
-COPY --from=server-builder --chown=65532:65532 /app/target/release/ferris-workflow /ferris-workflow
+COPY --from=server-builder --chown=65532:65532 /app/out/ferris-workflow /ferris-workflow
 COPY --from=server-builder --chown=65532:65532 /data /data
 ENV IP=0.0.0.0 \
     PORT=8080 \
@@ -45,11 +48,14 @@ COPY . .
 FROM dioxus-builder AS frontend-builder
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    dx build --platform web --fullstack false --profile web-release --no-default-features --features web
+    --mount=type=cache,target=/app/target,sharing=locked \
+    CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack false --profile web-release --no-default-features --features web \
+    && mkdir -p /app/out \
+    && cp -a /app/target/dx/ferris-workflow/release/web/public/. /app/out/
 
 FROM docker.io/nginxinc/nginx-unprivileged:stable-alpine-slim AS frontend
 COPY docker/frontend.conf.template /etc/nginx/templates/default.conf.template
-COPY --from=frontend-builder /app/target/dx/ferris-workflow/release/web/public/ /usr/share/nginx/html/
+COPY --from=frontend-builder /app/out/ /usr/share/nginx/html/
 ENV FERRIS_WORKFLOW_API_URL=http://server:8080 \
     NGINX_ENVSUBST_FILTER=^FERRIS_WORKFLOW_API_URL$
 EXPOSE 8080
@@ -57,13 +63,16 @@ EXPOSE 8080
 FROM dioxus-builder AS fullstack-builder
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    dx build --platform web --fullstack true --profile web-release --no-default-features --features web \
-    && strip --strip-all target/dx/ferris-workflow/release/web/server \
-    && mkdir -p /data
+    --mount=type=cache,target=/app/target,sharing=locked \
+    CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack \
+    && strip --strip-all /app/target/dx/ferris-workflow/release/web/server \
+    && mkdir -p /app/out/public /data \
+    && cp /app/target/dx/ferris-workflow/release/web/server /app/out/ferris-workflow \
+    && cp -a /app/target/dx/ferris-workflow/release/web/public/. /app/out/public/
 
 FROM ${STATIC_RUNTIME_IMAGE} AS fullstack
-COPY --from=fullstack-builder --chown=65532:65532 /app/target/dx/ferris-workflow/release/web/server /app/ferris-workflow
-COPY --from=fullstack-builder --chown=65532:65532 /app/target/dx/ferris-workflow/release/web/public /app/public
+COPY --from=fullstack-builder --chown=65532:65532 /app/out/ferris-workflow /app/ferris-workflow
+COPY --from=fullstack-builder --chown=65532:65532 /app/out/public /app/public
 COPY --from=fullstack-builder --chown=65532:65532 /data /data
 ENV IP=0.0.0.0 \
     PORT=8080 \
