@@ -1,6 +1,12 @@
-use axum::{Json, extract::{Path, State}, http::StatusCode};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, Set,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -75,7 +81,9 @@ pub async fn list_providers(
         .all(&state.db)
         .await
         .map_err(db_error)?;
-    Ok(Json(json!({ "data": providers.into_iter().map(ProviderResponse::from).collect::<Vec<_>>() })))
+    Ok(Json(
+        json!({ "data": providers.into_iter().map(ProviderResponse::from).collect::<Vec<_>>() }),
+    ))
 }
 
 pub async fn create_provider(
@@ -115,10 +123,7 @@ pub async fn update_provider(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "AI provider not found."))?;
     let replacing_key = input.api_key.as_deref().is_some_and(|key| !key.trim().is_empty());
     let provider_changed = input.provider != current.provider;
-    if input.provider != "ollama"
-        && current.api_key.is_empty()
-        && !replacing_key
-    {
+    if input.provider != "ollama" && current.api_key.is_empty() && !replacing_key {
         return Err(error(StatusCode::BAD_REQUEST, "An API key is required for this provider."));
     }
     if provider_changed && input.provider != "ollama" && !replacing_key {
@@ -156,8 +161,7 @@ pub async fn delete_provider(
 }
 
 fn validate_provider_input(
-    input: &ProviderInput,
-    require_api_key: bool,
+    input: &ProviderInput, require_api_key: bool,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     if input.name.trim().is_empty() || input.model.trim().is_empty() {
         return Err(error(StatusCode::BAD_REQUEST, "Provider name and model are required."));
@@ -207,7 +211,10 @@ pub async fn workflow_chat(
         return Err(error(StatusCode::BAD_REQUEST, "Enter a message for the workflow assistant."));
     }
     if prompt.len() > 20_000 || request.definition_json.len() > 250_000 {
-        return Err(error(StatusCode::PAYLOAD_TOO_LARGE, "The chat message or workflow is too large."));
+        return Err(error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "The chat message or workflow is too large.",
+        ));
     }
 
     let provider = ai_provider::Entity::find()
@@ -215,7 +222,12 @@ pub async fn workflow_chat(
         .one(&state.db)
         .await
         .map_err(db_error)?
-        .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "Configure and activate an AI provider in Settings."))?;
+        .ok_or_else(|| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Configure and activate an AI provider in Settings.",
+            )
+        })?;
     let endpoint = format!("{}/chat/completions", provider.base_url.trim_end_matches('/'));
 
     let mut messages = vec![json!({
@@ -237,22 +249,23 @@ pub async fn workflow_chat(
         )
     }));
 
-    let mut request = reqwest::Client::new()
-        .post(endpoint)
-        .json(&json!({
-            "model": provider.model,
-            "messages": messages,
-            "response_format": { "type": "json_object" }
-        }));
+    let mut request = reqwest::Client::new().post(endpoint).json(&json!({
+        "model": provider.model,
+        "messages": messages,
+        "response_format": { "type": "json_object" }
+    }));
     if !provider.api_key.is_empty() {
         request = request.bearer_auth(provider.api_key);
     }
-    let response = request.send()
-        .await
-        .map_err(|e| error(StatusCode::BAD_GATEWAY, format!("Could not reach the AI provider: {e}")))?;
+    let response = request.send().await.map_err(|e| {
+        error(StatusCode::BAD_GATEWAY, format!("Could not reach the AI provider: {e}"))
+    })?;
     let status = response.status();
     let body: Value = response.json().await.map_err(|e| {
-        error(StatusCode::BAD_GATEWAY, format!("The AI provider returned an unreadable response: {e}"))
+        error(
+            StatusCode::BAD_GATEWAY,
+            format!("The AI provider returned an unreadable response: {e}"),
+        )
     })?;
     if !status.is_success() {
         let detail = body["error"]["message"].as_str().unwrap_or("AI provider request failed");
@@ -273,7 +286,10 @@ pub async fn workflow_chat(
     };
     let definition_json = if let Some(raw) = definition_json {
         let normalized = crate::ows::normalize_ows_json(&raw).map_err(|e| {
-            error(StatusCode::BAD_GATEWAY, format!("The assistant generated an invalid workflow: {e}"))
+            error(
+                StatusCode::BAD_GATEWAY,
+                format!("The assistant generated an invalid workflow: {e}"),
+            )
         })?;
         Some(normalized)
     } else {

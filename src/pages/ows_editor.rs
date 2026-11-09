@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use ows_workflow_editor::{
-    ValidationState, WorkflowEditor, WorkflowExecution, WorkflowExecutionRecord,
-    WorkflowExecutionStep, WorkflowExample,
+    ValidationState, WorkflowEditor, WorkflowExample, WorkflowExecution, WorkflowExecutionRecord,
+    WorkflowExecutionStep,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -19,14 +19,13 @@ pub(crate) fn OwsEditor(
     on_validation: EventHandler<ValidationState>, validation: ValidationState,
     notice: Option<String>, workflow_id: Option<i32>, workflow_name: String,
     initial_execution_id: Option<String>, on_open_settings: EventHandler<()>,
-    ai_messages: Vec<WorkflowChatMessage>, ai_busy: bool,
-    on_ai_chat: EventHandler<String>, on_ai_apply: EventHandler<String>,
-    on_import: EventHandler<()>,
+    ai_messages: Vec<WorkflowChatMessage>, ai_busy: bool, on_ai_chat: EventHandler<String>,
+    on_ai_apply: EventHandler<String>, on_import: EventHandler<()>,
 ) -> Element {
     let mut last_definition = use_signal(String::new);
     let mut execution = use_signal(WorkflowExecution::default);
     let mut execution_refresh = use_signal(|| 0_u64);
-    let database_tables = use_resource(list_database_tables);
+    let database_tables = use_server_future(list_database_tables)?;
     let mut database_listening = use_signal(|| false);
     let mut database_event = use_signal(|| None::<String>);
     let mut assistant_open = use_signal(|| false);
@@ -34,13 +33,13 @@ pub(crate) fn OwsEditor(
     let mut input_json = use_signal(|| "{}".to_string());
     let mut input_error = use_signal(|| None::<String>);
     let mut execution_input = use_signal(|| serde_json::json!({}));
-    let execution_history = use_resource(move || {
+    let execution_history = use_server_future(move || {
         let refresh = execution_refresh();
         async move {
             let _ = refresh;
             list_executions().await
         }
-    });
+    })?;
     let validation_generation = use_hook(|| Rc::new(Cell::new(0_u64)));
     let generation_for_effect = validation_generation.clone();
 

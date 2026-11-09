@@ -10,7 +10,8 @@ mod pages;
 
 #[cfg(feature = "ui")]
 use pages::{
-    AiSettings, Credentials, DataTables, EditWorkflow, Executions, NewWorkflow, Overview, Variables,
+    AiSettings, Credentials, DataTables, EditPage, EditWorkflow, Executions, NewPage, NewWorkflow,
+    Overview, Pages, PluginDetailPage, PluginPagePage, PluginViewPage, Plugins, Variables,
     ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
@@ -85,6 +86,20 @@ enum Route {
     Overview {},
     #[route("/data-tables")]
     DataTables {},
+    #[route("/pages")]
+    Pages {},
+    #[route("/pages/new")]
+    NewPage {},
+    #[route("/pages/edit/:record_id")]
+    EditPage { record_id: i32 },
+    #[route("/plugins/:plugin_id/pages/:page_id")]
+    PluginPagePage { plugin_id: String, page_id: String },
+    #[route("/plugins/:plugin_id/views/:view_id")]
+    PluginViewPage { plugin_id: String, view_id: String },
+    #[route("/plugins")]
+    Plugins {},
+    #[route("/plugins/:plugin_id")]
+    PluginDetailPage { plugin_id: String },
     #[route("/workflows")]
     WorkflowList {},
     #[route("/new")]

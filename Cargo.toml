@@ -44,6 +44,8 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde = "1.0"
 serde_json = "1.0"
 serde_yaml = "0.9"
+ammonia = "4.2.4"
+async-trait = "0.1"
 ows-workflow-editor = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -61,6 +63,8 @@ serverless_workflow_core = { git = "https://github.com/open-workflow-specificati
 ows = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
 ows-core = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
 ows-dsl = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
+ows-expressions = { git = "https://github.com/dinosath/ows-rs", rev = "3e62718bb250fe4b34f944f6337f385daf74bc5c" }
+semver = "1"
 url = "2"
 
 connectrpc = { version = "0.9.1", default-features = false, features = ["json", "axum"] }
@@ -81,7 +85,7 @@ wasm-bindgen = "0.2"
 [features]
 default = ["web"]
 ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
-web = ["ui", "dioxus/web"]
+web = ["ui", "dioxus/web", "dioxus/fullstack"]
 mobile = ["ui", "dioxus/mobile"]
 server = []
 fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack"]

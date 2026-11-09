@@ -13,7 +13,7 @@ use crate::{
 
 #[component]
 pub(crate) fn AiSettings() -> Element {
-    let mut providers = use_resource(list_ai_providers);
+    let mut providers = use_server_future(list_ai_providers)?;
     let mut form_open = use_signal(|| false);
     let mut editing_id = use_signal(|| None::<i32>);
     let mut name = use_signal(String::new);

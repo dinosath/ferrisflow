@@ -4,6 +4,43 @@ use crate::components::ui::script::{Script, component_script};
 use dioxus::prelude::*;
 
 use crate::Route;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PluginMenuItem {
+    plugin_name: String,
+    label: String,
+    path: String,
+}
+
+fn menu_api_url(path: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let origin = web_sys::window()
+            .and_then(|window| window.location().origin().ok())
+            .unwrap_or_default();
+        format!("{origin}{path}")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!(
+            "{}{path}",
+            std::env::var("FERRIS_WORKFLOW_API_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8080".into())
+        )
+    }
+}
+
+async fn load_plugin_menu_items() -> Result<Vec<PluginMenuItem>, String> {
+    let response = reqwest::get(menu_api_url("/api/plugins/menu-items"))
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Plugin navigation request failed ({status})"));
+    }
+    response.json().await.map_err(|error| error.to_string())
+}
 
 component_script!(
     sidebar_resize_script = r#"
@@ -123,6 +160,7 @@ pub(crate) fn Shell(
     let mut document_menu = use_signal(|| false);
     let mut breadcrumb_editing = use_signal(|| false);
     let mut breadcrumb_draft = use_signal(String::new);
+    let plugin_menu_items = use_server_future(load_plugin_menu_items)?;
     use_effect(move || {
         let _script = sidebar_resize_script::start();
     });
@@ -154,12 +192,23 @@ pub(crate) fn Shell(
                 }
                 SidebarSection { title: "Workspace", nav_class: "sidebar-nav",
                     SidebarItem { to: Route::DataTables {}, active: active == "datatables", icon: "table", label: "Data tables" }
+                    SidebarItem { to: Route::Pages {}, active: active == "pages", icon: "layout", label: "Pages" }
                     SidebarItem { to: Route::WorkflowList {}, active: active == "workflows", icon: "workflow", label: "Workflows" }
                     SidebarItem { to: Route::Executions {}, active: active == "executions", icon: "clock", label: "Executions" }
                 }
                 SidebarSection { title: "Resources", nav_class: "sidebar-nav",
                     SidebarItem { to: Route::Credentials {}, active: active == "credentials", icon: "key", label: "Credentials" }
                     SidebarItem { to: Route::Variables {}, active: active == "variables", icon: "variable", label: "Variables" }
+                    SidebarItem { to: Route::Plugins {}, active: active == "plugins", icon: "plug", label: "Plugins" }
+                }
+                if let Some(Ok(items)) = plugin_menu_items() {
+                    if !items.is_empty() {
+                        SidebarSection { title: "Plugin menu", nav_class: "sidebar-nav",
+                            for item in items {
+                                a { class: "sidebar-link plugin-sidebar-link", href: "{item.path}", title: "{item.plugin_name}", span { class: "sidebar-icon", Icon { name: "plug" } } "{item.label}" }
+                            }
+                        }
+                    }
                 }
                 SidebarSection { title: "Settings", nav_class: "sidebar-nav",
                     SidebarItem { to: Route::AiSettings {}, active: active == "settings_ai", icon: "sparkles", label: "AI integration" }
@@ -285,7 +334,7 @@ pub(crate) fn Shell(
                     }
                 }
                 main { class: "main-content",
-                    if breadcrumb_title.is_none() {
+                    if breadcrumb_title.is_none() && (!header.is_empty() || !intro.is_empty()) {
                         div { class: "page-heading",
                             div { h1 { "{header}" } p { "{intro}" } }
                             div { class: "heading-actions", {actions} }

@@ -17,7 +17,7 @@ use crate::{
 
 #[component]
 pub(crate) fn WorkflowList() -> Element {
-    let mut workflows = use_resource(list_workflows);
+    let mut workflows = use_server_future(list_workflows)?;
     let mut query = use_signal(String::new);
     let mut import_open = use_signal(|| false);
     let mut import_error = use_signal(|| None::<String>);
@@ -25,9 +25,16 @@ pub(crate) fn WorkflowList() -> Element {
     let mut settings_workflow_id = use_signal(|| None::<i32>);
     let mut settings_error = use_signal(|| None::<String>);
     let navigator = use_navigator();
-    let on_import = move |workflow: ImportedWorkflow| {
+    let on_import = move |workflow: Result<ImportedWorkflow, String>| {
         import_open.set(false);
         import_error.set(None);
+        let workflow = match workflow {
+            Ok(workflow) => workflow,
+            Err(message) => {
+                import_error.set(Some(message));
+                return;
+            }
+        };
         spawn(async move {
             let result = async {
                 let validation = validate_workflow(workflow.definition_json.clone()).await?;

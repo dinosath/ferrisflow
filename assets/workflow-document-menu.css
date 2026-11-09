@@ -93,6 +93,9 @@
 .workflow-run-dialog__close:hover { background: #f4f4f5; color: #18181b; }
 .workflow-run-field { display: grid; gap: 7px; color: #414856; font-size: 12px; font-weight: 550; }
 .workflow-run-field select, .workflow-run-input { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #dfe4eb; border-radius: 7px; background: #fff; color: #252a35; font: inherit; font-size: 12px; }
+.workflow-run-form { display: grid; gap: 13px; }
+.workflow-run-form .workflow-run-field input:not([type="checkbox"]) { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #dfe4eb; border-radius: 7px; background: #fff; color: #252a35; font: inherit; font-size: 12px; }
+.workflow-run-form .workflow-run-field input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary, #087e6a); }
 .workflow-run-input { min-height: 132px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
 .workflow-run-dialog__empty { padding: 15px; border: 1px dashed #dfe4eb; border-radius: 8px; color: #707989; font-size: 12px; text-align: center; }
 .workflow-run-dialog__footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }

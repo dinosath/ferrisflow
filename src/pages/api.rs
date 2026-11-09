@@ -19,7 +19,7 @@ struct ValidationError {
     message: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(super) struct AiProvider {
     pub id: i32,
     pub name: String,
@@ -76,9 +76,8 @@ fn api_url(path: &str) -> String {
 }
 
 pub(super) async fn list_ai_providers() -> Result<Vec<AiProvider>, String> {
-    let response = reqwest::get(api_url("/api/ai/providers"))
-        .await
-        .map_err(|error| error.to_string())?;
+    let response =
+        reqwest::get(api_url("/api/ai/providers")).await.map_err(|error| error.to_string())?;
     let response: AiProviderListResponse = decode_response(response).await?;
     Ok(response.data)
 }
@@ -161,9 +160,7 @@ pub(super) async fn validate_workflow(definition_json: String) -> Result<Vec<Str
 }
 
 pub(super) async fn workflow_ai_chat(
-    prompt: String,
-    definition_json: String,
-    history: Vec<(String, String)>,
+    prompt: String, definition_json: String, history: Vec<(String, String)>,
 ) -> Result<WorkflowChatResponse, String> {
     let history = history
         .into_iter()

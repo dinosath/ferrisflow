@@ -13,7 +13,7 @@ use crate::{
 
 #[component]
 pub(crate) fn Overview() -> Element {
-    let workflows = use_resource(list_workflows);
+    let workflows = use_server_future(list_workflows)?;
 
     rsx! {
         Shell { active: "overview", header: "Overview", intro: "Monitor your workspace at a glance.", actions: rsx! { Link { class: "button button-primary", to: Route::NewWorkflow {}, "+ New workflow" } },
