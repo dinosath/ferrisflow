@@ -85,7 +85,7 @@ wasm-bindgen = "0.2"
 [features]
 default = ["web"]
 ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
-web = ["ui", "dioxus/web"]
+web = ["ui", "dioxus/web", "dioxus/fullstack"]
 mobile = ["ui", "dioxus/mobile"]
 server = []
 fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack"]
