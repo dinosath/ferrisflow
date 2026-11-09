@@ -5,6 +5,8 @@ use std::collections::HashSet;
 
 use crate::{
     components::data_table::{DataTable, DataTableCell, DataTableRow},
+    components::icons::Icon,
+    components::import_source::{ImportSource, ImportSourceDialog},
     components::ui::button::{Button, ButtonSize, ButtonVariant},
     pages::shared::{ErrorPanel, LoadingPanel, Shell},
 };
@@ -92,19 +94,156 @@ fn plugin_resource_count(manifest: &Value) -> usize {
         .sum()
 }
 
+fn plugin_import_request(source: ImportSource) -> Result<(&'static str, Value), String> {
+    match source {
+        ImportSource::Url(url) => Ok(("/api/plugins/import", serde_json::json!({"url": url}))),
+        ImportSource::Contents(contents) => Ok(("/api/plugins", parse_plugin_package(&contents)?)),
+        ImportSource::FileBundle { contents, files } => {
+            let mut package = parse_plugin_package(&contents)?;
+            merge_plugin_files(&mut package, files)?;
+            Ok(("/api/plugins", package))
+        }
+    }
+}
+
+fn parse_plugin_package(contents: &str) -> Result<Value, String> {
+    let package = serde_json::from_str::<Value>(contents)
+        .map_err(|message| format!("Plugin package JSON is invalid: {message}"))?;
+    if !package.is_object() {
+        return Err("Plugin package must be a JSON object.".to_string());
+    }
+    Ok(package)
+}
+
+fn merge_plugin_files(
+    package: &mut Value, attachments: Vec<(String, String)>,
+) -> Result<(), String> {
+    let manifest = package.get("manifest").unwrap_or(package);
+    let mut references = HashSet::new();
+    collect_plugin_file_references(manifest, &mut references);
+    if let (Some(entry), Some(files)) = (
+        package.get("entry").and_then(Value::as_str),
+        package.get("files").and_then(Value::as_object),
+    ) {
+        if let Some(raw) = files.get(entry) {
+            let entry_manifest = raw
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .unwrap_or_else(|| raw.clone());
+            collect_plugin_file_references(&entry_manifest, &mut references);
+        }
+    }
+    // A referenced dependency JSON may itself reference schemas or workflows.
+    for (_, contents) in &attachments {
+        if let Ok(value) = serde_json::from_str::<Value>(contents) {
+            collect_plugin_file_references(&value, &mut references);
+        }
+    }
+    let files = package
+        .as_object_mut()
+        .expect("package was validated as an object")
+        .entry("files")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let files = files
+        .as_object_mut()
+        .ok_or_else(|| "Plugin package 'files' must be a JSON object.".to_string())?;
+
+    for (name, contents) in attachments {
+        let normalized = name.replace('\\', "/");
+        let basename = normalized.rsplit('/').next().unwrap_or(&normalized);
+        let exact = references.contains(&normalized).then_some(normalized.as_str());
+        let matching: Vec<&str> = references
+            .iter()
+            .map(String::as_str)
+            .filter(|reference| reference.rsplit('/').next() == Some(basename))
+            .collect();
+        let key = if let Some(path) = exact {
+            path.to_string()
+        } else if matching.len() == 1 {
+            matching[0].to_string()
+        } else if matching.len() > 1 {
+            return Err(format!(
+                "The file '{basename}' matches multiple plugin references. Select files with distinct names or embed them in the package."
+            ));
+        } else {
+            normalized
+        };
+        if files.contains_key(&key) {
+            return Err(format!("Plugin package already contains '{key}'."));
+        }
+        files.insert(key, Value::String(contents));
+    }
+    Ok(())
+}
+
+fn collect_plugin_file_references(value: &Value, references: &mut HashSet<String>) {
+    match value {
+        Value::Object(object) => {
+            for key in ["$file", "file"] {
+                if let Some(path) = object.get(key).and_then(Value::as_str) {
+                    references.insert(path.replace('\\', "/"));
+                }
+            }
+            for child in object.values() {
+                collect_plugin_file_references(child, references);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                collect_plugin_file_references(child, references);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[component]
 pub(crate) fn Plugins() -> Element {
     let mut plugins = use_server_future(list_plugins)?;
     let mut refresh = use_signal(|| 0_u64);
     let mut creating_json = use_signal(|| false);
     let mut creating = use_signal(|| false);
+    let mut import_open = use_signal(|| false);
     let mut package_json = use_signal(|| default_plugin_json());
-    let mut source_url = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut busy = use_signal(|| false);
     let mut query = use_signal(String::new);
     let navigator = use_navigator();
     let _refresh_version = refresh();
+    let on_plugin_import = move |source: Result<ImportSource, String>| {
+        let request = source.and_then(plugin_import_request);
+        let (path, payload) = match request {
+            Ok(request) => request,
+            Err(message) => {
+                error.set(Some(message));
+                return;
+            }
+        };
+        error.set(None);
+        busy.set(true);
+        spawn(async move {
+            let result = async {
+                let response = reqwest::Client::new()
+                    .post(api_url(path))
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|message| message.to_string())?;
+                decode::<Plugin>(response).await
+            }
+            .await;
+            match result {
+                Ok(plugin) => {
+                    import_open.set(false);
+                    plugins.restart();
+                    refresh += 1;
+                    navigator.push(crate::Route::PluginDetailPage { plugin_id: plugin.uid });
+                }
+                Err(message) => error.set(Some(message)),
+            }
+            busy.set(false);
+        });
+    };
 
     rsx! {
         Shell {
@@ -112,16 +251,6 @@ pub(crate) fn Plugins() -> Element {
             header: "Plugins",
             intro: "Package database schemas, workflows, navigation, and pages as reusable JSON bundles.",
             actions: rsx! {
-                label { class: "plugin-import-url", input { placeholder: "https://…/plugin.json", value: "{source_url}", oninput: move |event| source_url.set(event.value()) }
-                    Button { size: ButtonSize::Sm, variant: ButtonVariant::Secondary, r#type: "button", disabled: busy() || source_url().trim().is_empty(), onclick: move |_| {
-                        busy.set(true); let url = source_url().trim().to_string();
-                        spawn(async move {
-                            let result = async { let response = reqwest::Client::new().post(api_url("/api/plugins/import")).json(&serde_json::json!({"url":url})).send().await.map_err(|e|e.to_string())?; decode::<Plugin>(response).await }.await;
-                            match result { Ok(plugin) => { source_url.set(String::new()); plugins.restart(); refresh += 1; navigator.push(crate::Route::PluginDetailPage { plugin_id: plugin.uid }); }, Err(message) => error.set(Some(message)) }
-                            busy.set(false);
-                        });
-                    }, "Import URL" }
-                }
                 Button { size: ButtonSize::Sm, variant: ButtonVariant::Secondary, r#type: "button", onclick: move |_| { package_json.set(default_plugin_json()); creating_json.set(true); error.set(None); }, "JSON package" }
                 Button { size: ButtonSize::Sm, variant: ButtonVariant::Primary, r#type: "button", onclick: move |_| { creating.set(true); error.set(None); }, "+ New plugin" }
             },
@@ -140,7 +269,16 @@ pub(crate) fn Plugins() -> Element {
                                 row_ids,
                                 toolbar: rsx! {
                                     label { class: "workflow-list-search",
+                                        Icon { name: "search" }
                                         input { r#type: "search", aria_label: "Filter plugins by name or ID", placeholder: "Filter plugins...", value: "{query}", oninput: move |event| query.set(event.value()) }
+                                    }
+                                    button {
+                                        class: "button button-quiet workflow-list-import",
+                                        r#type: "button",
+                                        disabled: busy(),
+                                        onclick: move |_| { error.set(None); import_open.set(true); },
+                                        Icon { name: "upload" }
+                                        "Import"
                                     }
                                 },
                                 empty_message: if query().is_empty() { "No plugins yet. Create a plugin to get started.".to_owned() } else { "No plugins match your search.".to_owned() },
@@ -171,6 +309,24 @@ pub(crate) fn Plugins() -> Element {
                     },
                     Some(Err(message)) => rsx! { ErrorPanel { message } },
                     None => rsx! { LoadingPanel {} },
+                }
+                if import_open() {
+                    ImportSourceDialog {
+                        title: "Import plugin".to_string(),
+                        description: "Load a plugin package from its JSON file. The file must contain a valid plugin manifest.".to_string(),
+                        file_label: "Choose a plugin JSON package".to_string(),
+                        accept: ".json,application/json".to_string(),
+                        url_placeholder: "https://example.com/plugin.json".to_string(),
+                        text_placeholder: "Paste a plugin package JSON object…".to_string(),
+                        action_label: "Import plugin".to_string(),
+                        fetch_url: false,
+                        error: error(),
+                        external_busy: busy(),
+                        https_only: true,
+                        validate_plugin_json: true,
+                        on_import: on_plugin_import,
+                        on_close: move |_| import_open.set(false),
+                    }
                 }
             }
         }
@@ -262,6 +418,11 @@ pub(crate) fn PluginDetailPage(plugin_id: String) -> Element {
                             }
                         }
                         if let Some(message) = error() { div { class: "error-panel", "{message}" } }
+                        if let Some(warnings) = plugin.manifest.get("importWarnings").and_then(Value::as_array) {
+                            for warning in warnings.iter().filter_map(Value::as_str) {
+                                p { class: "plugin-source-note", "{warning}" }
+                            }
+                        }
                         div { class: "plugin-resource-grid",
                             ResourceCount { title: "Database", count: section_count(&plugin.manifest, "contentTypes"), detail: "Content types and schema" }
                             ResourceCount { title: "Workflows", count: section_count(&plugin.manifest, "workflows"), detail: "Workflow definitions" }
@@ -634,6 +795,100 @@ fn default_plugin_json() -> String {
         "pages": []
     }))
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn package_content_posts_to_plugin_creation_endpoint() {
+        let result = plugin_import_request(ImportSource::Contents(
+            r#"{"name":"Novels","version":"1.0.0"}"#.to_string(),
+        ));
+
+        assert_eq!(
+            result.unwrap(),
+            ("/api/plugins", serde_json::json!({"name":"Novels","version":"1.0.0"}))
+        );
+    }
+
+    #[test]
+    fn url_import_uses_server_side_import_endpoint() {
+        let result = plugin_import_request(ImportSource::Url(
+            "https://example.com/novels/plugin.json".to_string(),
+        ));
+
+        assert_eq!(
+            result.unwrap(),
+            (
+                "/api/plugins/import",
+                serde_json::json!({"url":"https://example.com/novels/plugin.json"})
+            )
+        );
+    }
+
+    #[test]
+    fn invalid_or_non_object_packages_are_rejected() {
+        assert!(plugin_import_request(ImportSource::Contents("{".to_string())).is_err());
+        assert_eq!(
+            plugin_import_request(ImportSource::Contents("[]".to_string())).unwrap_err(),
+            "Plugin package must be a JSON object."
+        );
+    }
+
+    #[test]
+    fn embedded_json_bundle_is_preserved() {
+        let source = ImportSource::Contents(
+            r#"{"id":"local.novels","files":{"workflows/read.json":"{\"name\":\"Read novels\"}"},"workflows":[{"$file":"workflows/read.json"}]}"#.to_string(),
+        );
+        let (_, package) = plugin_import_request(source).unwrap();
+        assert_eq!(package["files"]["workflows/read.json"], r#"{"name":"Read novels"}"#);
+        assert_eq!(package["workflows"][0]["$file"], "workflows/read.json");
+    }
+
+    #[test]
+    fn attached_json_files_match_manifest_references_by_basename() {
+        let manifest = r#"{
+            "id":"local.novels",
+            "workflows":[{"$file":"workflows/read.json"}],
+            "database":{"contentTypes":[{"$file":"content-types/novel.json"}]},
+            "plugins":[{"file":"plugins/content-types.json"}]
+        }"#;
+        let source = ImportSource::FileBundle {
+            contents: manifest.to_string(),
+            files: vec![
+                ("read.json".to_string(), r#"{"name":"Read novels"}"#.to_string()),
+                ("novel.json".to_string(), r#"{"name":"Novel"}"#.to_string()),
+                (
+                    "content-types.json".to_string(),
+                    r#"{"id":"ferrisflow.content-types"}"#.to_string(),
+                ),
+            ],
+        };
+        let (path, package) = plugin_import_request(source).unwrap();
+        assert_eq!(path, "/api/plugins");
+        assert_eq!(package["files"]["workflows/read.json"], r#"{"name":"Read novels"}"#);
+        assert_eq!(package["files"]["content-types/novel.json"], r#"{"name":"Novel"}"#);
+        assert_eq!(
+            package["files"]["plugins/content-types.json"],
+            r#"{"id":"ferrisflow.content-types"}"#
+        );
+    }
+
+    #[test]
+    fn duplicate_or_ambiguous_attached_json_files_are_rejected() {
+        let manifest = r#"{"workflows":[{"$file":"one/task.json"},{"$file":"two/task.json"}]}"#;
+        let source = ImportSource::FileBundle {
+            contents: manifest.to_string(),
+            files: vec![("task.json".to_string(), "{}".to_string())],
+        };
+        assert!(
+            plugin_import_request(source)
+                .unwrap_err()
+                .contains("matches multiple plugin references")
+        );
+    }
 }
 
 fn plugin_reference_label(reference: &Value) -> &str {

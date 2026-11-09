@@ -400,7 +400,15 @@ fn WorkflowPage(workflow_id: Option<i32>, initial_execution_id: Option<String>) 
             }
         }
     };
-    let on_import = move |imported: ImportedWorkflow| {
+    let on_import = move |imported: Result<ImportedWorkflow, String>| {
+        let imported = match imported {
+            Ok(imported) => imported,
+            Err(message) => {
+                error.set(Some(message));
+                import_open.set(false);
+                return;
+            }
+        };
         error.set(None);
         spawn(async move {
             match validate_workflow(imported.definition_json.clone()).await {

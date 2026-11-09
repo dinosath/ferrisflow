@@ -10,3 +10,9 @@ This repository contains Ferrisflow, a Rust and Dioxus workflow application.
 - Keep section heading styles unified through `sidebar-section-label`. Use `SidebarSection` for all sidebar groups, including Settings.
 - Add new settings destinations as normal `SidebarItem`s in the Settings section.
 - Remove obsolete sidebar-specific styles when their markup is removed.
+
+## List pages and imports
+
+- Build record lists with the shared `DataTable`, `DataTableRow`, and `DataTableCell` components. Put search and import controls in the table toolbar, and keep the primary create action in `Shell.actions`.
+- Use the shared `ImportSourceDialog` for import flows that accept a URL, file, or pasted text. When a JSON package can reference companion files, support selecting those files alongside the primary JSON file; keep import controls shared rather than creating page-specific source controls.
+- Add tests for import source parsing and request routing when introducing or changing an import flow.
