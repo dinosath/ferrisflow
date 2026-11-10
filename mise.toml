@@ -74,12 +74,12 @@ run = "cargo chef prepare --recipe-path recipe.json"
 
 [tasks.docker-build]
 description = "Build Docker images"
-run = "docker build -t ferris-workflow ."
+run = "docker build -t ferrisflow ."
 depends = ["frontend-build"]
 
 [tasks.docker-push]
 description = "Push Docker images"
-run = "docker push -t ferris-workflow ."
+run = "docker push ferrisflow"
 depends = ["docker-build"]
 
 [tasks.e2e]
@@ -97,7 +97,7 @@ run = "helm package ."
 [tasks.helm-push]
 description = "Push Helm chart"
 dir="helm"
-run = "helm push ferris-workflow"
+run = "helm push ferrisflow"
 depends = ["helm-package"]
 
 

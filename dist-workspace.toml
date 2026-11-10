@@ -21,7 +21,7 @@ default-features = false
 # The installers to generate for each app
 installers = ["shell"]
 # Extra static files to include in each App (path relative to this Cargo.toml's dir)
-include = ["target/dx/ferris-workflow/release/web/public/"]
+include = ["target/dx/ferrisflow/release/web/public/"]
 github-build-setup = "../dist-build-setup.yml"
 # Which actions to run on pull requests
 pr-run-mode = "upload"

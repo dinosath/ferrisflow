@@ -23,10 +23,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target cargo build --locked --release --no-default-features --features api-server \
     && mkdir -p /app/out /data \
-    && cp /app/target/release/ferris-workflow /app/out/ferris-workflow
+    && cp /app/target/release/ferrisflow /app/out/ferrisflow
 
 FROM ${STATIC_RUNTIME_IMAGE} AS server
-COPY --from=server-builder --chown=65532:65532 /app/out/ferris-workflow /ferris-workflow
+COPY --from=server-builder --chown=65532:65532 /app/out/ferrisflow /ferrisflow
 COPY --from=server-builder --chown=65532:65532 /data /data
 ENV IP=0.0.0.0 \
     PORT=8080 \
@@ -34,7 +34,7 @@ ENV IP=0.0.0.0 \
 VOLUME ["/data"]
 EXPOSE 8080
 USER 65532:65532
-ENTRYPOINT ["/ferris-workflow"]
+ENTRYPOINT ["/ferrisflow"]
 
 FROM chef AS dioxus-builder
 RUN apk add --no-cache openssl-dev openssl-libs-static \
@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack false --profile web-release --no-default-features --features web \
     && mkdir -p /app/out \
-    && cp -a /app/target/dx/ferris-workflow/release/web/public/. /app/out/
+    && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/
 
 FROM docker.io/nginxinc/nginx-unprivileged:stable-alpine-slim AS frontend
 COPY docker/frontend.conf.template /etc/nginx/templates/default.conf.template
@@ -65,13 +65,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack \
-    && strip --strip-all /app/target/dx/ferris-workflow/release/web/server \
+    && strip --strip-all /app/target/dx/ferrisflow/release/web/server \
     && mkdir -p /app/out/public /data \
-    && cp /app/target/dx/ferris-workflow/release/web/server /app/out/ferris-workflow \
-    && cp -a /app/target/dx/ferris-workflow/release/web/public/. /app/out/public/
+    && cp /app/target/dx/ferrisflow/release/web/server /app/out/ferrisflow \
+    && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/public/
 
 FROM ${STATIC_RUNTIME_IMAGE} AS fullstack
-COPY --from=fullstack-builder --chown=65532:65532 /app/out/ferris-workflow /app/ferris-workflow
+COPY --from=fullstack-builder --chown=65532:65532 /app/out/ferrisflow /app/ferrisflow
 COPY --from=fullstack-builder --chown=65532:65532 /app/out/public /app/public
 COPY --from=fullstack-builder --chown=65532:65532 /data /data
 ENV IP=0.0.0.0 \
@@ -81,4 +81,4 @@ ENV IP=0.0.0.0 \
 VOLUME ["/data"]
 EXPOSE 8080
 USER 65532:65532
-ENTRYPOINT ["/app/ferris-workflow"]
+ENTRYPOINT ["/app/ferrisflow"]

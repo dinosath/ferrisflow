@@ -204,9 +204,9 @@ CI builds three images and publishes them to GitHub Container Registry on
 `main` and version tags:
 
 ```text
-ghcr.io/dinosath/ferris-workflow-server    # API server only
-ghcr.io/dinosath/ferris-workflow-frontend  # Static web app with /api proxy
-ghcr.io/dinosath/ferris-workflow-fullstack # Web app and API in one server
+ghcr.io/dinosath/ferrisflow           # API server only
+ghcr.io/dinosath/ferrisflow-frontend  # Static web app with /api proxy
+ghcr.io/dinosath/ferrisflow-fullstack # Web app and API in one server
 ```
 
 The server and fullstack images use `/data` for the default SQLite database;
@@ -220,7 +220,7 @@ CI run tests and builds the Rust server variants and packages the Helm chart as
 a downloadable workflow artifact.
 
 Tagged releases also include a cargo-dist Linux archive and shell installer.
-The archive contains the `ferris-workflow` server executable and the Dioxus
+The archive contains the `ferrisflow` server executable and the Dioxus
 frontend files in a sibling `public/` directory; run the executable from the
 extracted directory to serve both the UI and API. The release build targets
 `x86_64-unknown-linux-gnu`.
@@ -238,9 +238,9 @@ prereleases older than 30 days are removed weekly along with their tags.
 Build an individual image locally with BuildKit:
 
 ```sh
-docker build --target server -t ferris-workflow-server .
-docker build --target frontend -t ferris-workflow-frontend .
-docker build --target fullstack -t ferris-workflow-fullstack .
+docker build --target server -t ferrisflow .
+docker build --target frontend -t ferrisflow-frontend .
+docker build --target fullstack -t ferrisflow-fullstack .
 ```
 
 The server and fullstack targets use Docker Hardened Images when credentials are

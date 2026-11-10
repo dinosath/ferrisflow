@@ -1,3 +1,3 @@
-{{- define "ferris-workflow.fullname" -}}
+{{- define "ferrisflow.fullname" -}}
 {{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 -}}
 {{- end -}}

@@ -21,8 +21,8 @@ async fn main() {
     use tracing_subscriber::EnvFilter;
 
     tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
-    let state = ferris_workflow::app_state::AppState::new().await;
-    let api = ferris_workflow::build_router(state);
+    let state = ferrisflow::app_state::AppState::new().await;
+    let api = ferrisflow::build_router(state);
     let ip = std::env::var("IP").unwrap_or_else(|_| "0.0.0.0".to_owned());
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "8080".to_owned())
@@ -43,8 +43,8 @@ async fn main() {
 ))]
 fn main() {
     dioxus::serve(|| async move {
-        let state = ferris_workflow::app_state::AppState::new().await;
-        let api = ferris_workflow::build_router(state);
+        let state = ferrisflow::app_state::AppState::new().await;
+        let api = ferrisflow::build_router(state);
         // The Dioxus router renders app routes; merge in the API routes
         // while keeping the UI renderer as the final fallback.
         Ok(dioxus::server::router(app).merge(api.reset_fallback()))
