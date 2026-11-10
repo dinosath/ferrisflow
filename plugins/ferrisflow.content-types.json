@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ferrisflow.content-types",
   "name": "Content types",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Define content schemas, manage records, and create CRUD workflows.",
   "builtin": true,
   "database": {
@@ -130,7 +130,7 @@
               "table": "${ .definition.uid }",
               "input": "${ . }",
               "returnInput": true,
-              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end), required: (.required // false)})) }"
+              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"integer\" then \"integer\" else if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end end), required: (.required // false), unique: (.unique // false)})) }"
             },
             "input": {
               "schema": {
@@ -191,7 +191,8 @@
                                       "date",
                                       "email",
                                       "json",
-                                      "enum"
+                                      "enum",
+                                      "integer"
                                     ]
                                   }
                                 }
@@ -225,12 +226,13 @@
         },
         {
           "createCrudWorkflows": {
-            "call": "ferrisflow.primitive",
-            "with": {
-              "primitive": "workflow.instantiate",
-              "plugin": "ferrisflow.content-types",
-              "template": "crud",
-              "parameters": "${ (.definition // .) + {ownerPlugin: (.plugin.id // \"ferrisflow.content-types\")} }"
+            "run": {
+              "workflow": {
+                "namespace": "ferrisflow_core",
+                "name": "content-type-crud",
+                "version": "1.0.0",
+                "input": "${ . }"
+              }
             }
           }
         }
@@ -677,7 +679,7 @@
               "table": "${ .definition.uid }",
               "input": "${ . }",
               "returnInput": true,
-              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end), required: (.required // false)})) }"
+              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"integer\" then \"integer\" else if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end end), required: (.required // false), unique: (.unique // false)})) }"
             },
             "input": {
               "schema": {
@@ -738,7 +740,8 @@
                                       "date",
                                       "email",
                                       "json",
-                                      "enum"
+                                      "enum",
+                                      "integer"
                                     ]
                                   }
                                 }
@@ -786,13 +789,30 @@
       },
       "do": [
         {
+          "definition": {
+            "set": {
+              "definition": "${ .definition // . }",
+              "plugin": "${ .plugin }"
+            }
+          }
+        },
+        {
+          "inputSchema": {
+            "set": {
+              "definition": "${ .definition // . }",
+              "plugin": "${ .plugin }",
+              "inputSchema": "${ {type:\"object\",required:(.definition.schema.fields | map(select(.required == true) | .name)),properties:((.definition.schema.fields | map({(.name): ({title:.label,multiline:(.type == \"richtext\"),type:(if .type == \"integer\" then \"integer\" else if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else if .type == \"json\" then \"object\" else \"string\" end end end end)} + (if .minimum != null then {minimum:.minimum} else {} end) + (if .required == true and (.type == \"text\" or .type == \"richtext\") then {minLength:1} else {} end))}) | add) + {id:{type:\"integer\",title:\"Record ID\"}})} }"
+            }
+          }
+        },
+        {
           "createCrudWorkflows": {
             "call": "ferrisflow.primitive",
             "with": {
               "primitive": "workflow.instantiate",
               "plugin": "ferrisflow.content-types",
               "template": "crud",
-              "parameters": "${ (.definition // .) + {ownerPlugin: (.plugin.id // \"ferrisflow.content-types\")} }"
+              "parameters": "${ .definition + {ownerPlugin:(.plugin.id // \"ferrisflow.content-types\"), outputView:{type:\"article\",titleField:\"title\",bodyField:(.definition.schema.fields | map(select(.type == \"richtext\") | .name) | first)}, inputSchema:.inputSchema, updateSchema:(.inputSchema + {required:[\"id\"]})} }"
             }
           }
         }
@@ -937,17 +957,23 @@
             },
             "ui": {
               "input_schema": {
-                "type": "object",
-                "properties": {}
+                "$parameter": "inputSchema"
               },
               "view": {
-                "type": "json",
-                "config": {}
+                "type": "form",
+                "config": {
+                  "title": "{{display_name}}"
+                }
               }
             }
           }
         },
         "do": [
+          {
+            "requestInput": {
+              "set": "${ (.request.body // .) + (.request.params // {}) }"
+            }
+          },
           {
             "record": {
               "call": "ferrisflow.primitive",
@@ -957,6 +983,14 @@
                 "table": "{{uid}}",
                 "input": "${ . }",
                 "keyType": "integer"
+              },
+              "input": {
+                "schema": {
+                  "format": "json",
+                  "document": {
+                    "$parameter": "inputSchema"
+                  }
+                }
               }
             }
           }
@@ -985,6 +1019,9 @@
               "view": {
                 "type": "json",
                 "config": {}
+              },
+              "output_view": {
+                "$parameter": "outputView"
               }
             }
           }
@@ -1021,17 +1058,23 @@
             },
             "ui": {
               "input_schema": {
-                "type": "object",
-                "properties": {}
+                "$parameter": "updateSchema"
               },
               "view": {
-                "type": "json",
-                "config": {}
+                "type": "form",
+                "config": {
+                  "title": "{{display_name}}"
+                }
               }
             }
           }
         },
         "do": [
+          {
+            "requestInput": {
+              "set": "${ (.request.body // .) + (.request.params // {}) | . + {id:(.id | tonumber)} }"
+            }
+          },
           {
             "record": {
               "call": "ferrisflow.primitive",
@@ -1041,6 +1084,14 @@
                 "table": "{{uid}}",
                 "input": "${ . }",
                 "keyType": "integer"
+              },
+              "input": {
+                "schema": {
+                  "format": "json",
+                  "document": {
+                    "$parameter": "updateSchema"
+                  }
+                }
               }
             }
           }

@@ -46,6 +46,7 @@ impl AppState {
             tracing::warn!(%error, "could not install configured database triggers");
         }
         crate::db_triggers::spawn_listener(state.clone());
+        crate::workflow_schedules::spawn(state.clone());
         state
     }
 }

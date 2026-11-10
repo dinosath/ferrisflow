@@ -9,7 +9,7 @@ fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-async fn apply<C: ConnectionTrait + Send + Sync + 'static>(
+async fn apply<C: ConnectionTrait + TransactionTrait + Send + Sync + 'static>(
     db: Arc<C>, manifest: &Value,
 ) -> Result<(), String> {
     let rows = plugin::Entity::find().all(&*db).await.map_err(error)?;

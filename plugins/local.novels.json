@@ -1,5 +1,5 @@
 {
-  "description": "Crawl Brightnovels into Novel and Chapter records and read them in Ferrisflow.",
+  "description": "Import Brightnovels novels and chapters, browse stored records, and refresh opted-in novels every 30 minutes.",
   "id": "local.novels",
   "menuItems": [
     {
@@ -29,7 +29,7 @@
     }
   ],
   "schemaVersion": 1,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "views": [
     {
       "id": "local_novels_novel-table",
@@ -85,7 +85,9 @@
           "local_novels_novel-create",
           "local_novels_novel-read",
           "local_novels_novel-update",
-          "local_novels_novel-delete"
+          "local_novels_novel-delete",
+          "crawl-brightnovels",
+          "refresh-brightnovels"
         ],
         "createAction": {
           "workflow": "local_novels_novel-create",
@@ -101,9 +103,38 @@
             "last_checked_at": ""
           }
         },
-        "rowAction": {
-          "workflow": "local_novels_novel-update"
-        }
+        "actions": [
+          {
+            "label": "Import novel",
+            "workflow": "crawl-brightnovels",
+            "input": {
+              "novel_url": "",
+              "chapter_from": 1,
+              "chapter_to": 5,
+              "auto_update": false
+            }
+          }
+        ],
+        "rowActions": [
+          {
+            "label": "Refresh",
+            "workflow": "refresh-brightnovels",
+            "inputMapping": {
+              "novel_url": "source"
+            }
+          },
+          {
+            "label": "Edit",
+            "workflow": "local_novels_novel-update"
+          },
+          {
+            "label": "Delete",
+            "workflow": "local_novels_novel-delete",
+            "inputMapping": {
+              "id": "id"
+            }
+          }
+        ]
       }
     },
     {
@@ -161,9 +192,26 @@
             "downloaded_at": ""
           }
         },
-        "rowAction": {
-          "workflow": "local_novels_chapter-update"
-        }
+        "rowActions": [
+          {
+            "label": "Read",
+            "workflow": "local_novels_chapter-read",
+            "inputMapping": {
+              "id": "id"
+            }
+          },
+          {
+            "label": "Edit",
+            "workflow": "local_novels_chapter-update"
+          },
+          {
+            "label": "Delete",
+            "workflow": "local_novels_chapter-delete",
+            "inputMapping": {
+              "id": "id"
+            }
+          }
+        ]
       }
     }
   ],
@@ -171,6 +219,63 @@
     {
       "do": [
         {
+          "requestInput": {
+            "set": "${ .request.body // . }"
+          }
+        },
+        {
+          "normalizeInput": {
+            "set": "${ if (.chapter_from != null and .chapter_to != null and .chapter_to < .chapter_from) then error(\"Last chapter must be greater than or equal to first chapter\") else . + {novel_url:(.novel_url | rtrimstr(\"/\"))} end }",
+            "input": {
+              "schema": {
+                "format": "json",
+                "document": {
+                  "type": "object",
+                  "required": [
+                    "novel_url"
+                  ],
+                  "properties": {
+                    "novel_url": {
+                      "type": "string",
+                      "title": "Novel URL",
+                      "pattern": "^https://brightnovels\\.com/series/[A-Za-z0-9_-]+/?$"
+                    },
+                    "chapter_from": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "First chapter"
+                    },
+                    "chapter_to": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "Last chapter"
+                    },
+                    "auto_update": {
+                      "type": "boolean",
+                      "title": "Refresh automatically"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "loadStoredNovel": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "list",
+              "table": "local_novels_novel",
+              "filter": "${ {source:.novel_url} }",
+              "input": "${ . }"
+            },
+            "output": {
+              "as": "${ $input + {stored:($output | first)} }"
+            }
+          }
+        },
+        {
           "allowBrightnovels": {
             "call": "http",
             "output": {
@@ -204,7 +309,7 @@
         },
         {
           "parseSeries": {
-            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // 1),\n    chapterTo: (.chapter_to // 5),\n    chapters: [],\n    downloaded: []\n  }\n}"
+            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // 1),\n    chapterTo: (.chapter_to // 5),\n    stored: .stored,\n    autoUpdateExplicit: (.auto_update != null),\n    autoUpdate: (if .auto_update != null then (.auto_update) else (.stored.auto_update // false) end),\n    lastDownloaded: (.stored.last_downloaded_chapter // 0),\n    chapters: [],\n    downloaded: []\n  }\n}"
           }
         },
         {
@@ -226,7 +331,7 @@
         },
         {
           "prepareChapters": {
-            "set": "${\n  {\n    series: .seriesPage.props.series,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
+            "set": "${\n  {\n    series: .seriesPage.props.series,\n    autoUpdate: .autoUpdate,\n    autoUpdateExplicit: .autoUpdateExplicit,\n    lastDownloaded: .lastDownloaded,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
           }
         },
         {
@@ -236,7 +341,7 @@
                 "fetchChapter": {
                   "call": "http",
                   "output": {
-                    "as": "$input + {\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
+                    "as": "$input + {\n  lastDownloaded: (if $chapter.chapterNumber > $input.lastDownloaded then $chapter.chapterNumber else $input.lastDownloaded end),\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
                   },
                   "with": {
                     "endpoint": "${ \"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug }",
@@ -258,7 +363,19 @@
         },
         {
           "result": {
-            "set": "${\n  {\n    title: .series.title,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+            "set": "${\n  {\n    title: .series.title,\n    auto_update: .autoUpdate,\n    auto_update_explicit: .autoUpdateExplicit,\n    last_downloaded_chapter: .lastDownloaded,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+          }
+        },
+        {
+          "saveRecords": {
+            "run": {
+              "workflow": {
+                "namespace": "local",
+                "name": "save-brightnovels",
+                "version": "0.2.0",
+                "input": "${ . }"
+              }
+            }
           }
         }
       ],
@@ -266,37 +383,119 @@
         "dsl": "1.0.3",
         "name": "crawl-brightnovels",
         "namespace": "local",
-        "version": "0.1.0"
-      },
-      "input": {
-        "from": ".",
-        "schema": {
-          "document": {
-            "properties": {
-              "chapter_from": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "chapter_to": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "novel_url": {
-                "format": "uri",
-                "type": "string"
+        "version": "0.2.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "local.novels",
+            "description": "Download and save a novel and its chapters."
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "required": [
+                "novel_url"
+              ],
+              "properties": {
+                "novel_url": {
+                  "type": "string",
+                  "title": "Novel URL",
+                  "pattern": "^https://brightnovels\\.com/series/[A-Za-z0-9_-]+/?$"
+                },
+                "chapter_from": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "First chapter"
+                },
+                "chapter_to": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "Last chapter"
+                },
+                "auto_update": {
+                  "type": "boolean",
+                  "title": "Refresh automatically"
+                }
               }
             },
-            "required": [
-              "novel_url"
-            ],
-            "type": "object"
+            "view": {
+              "type": "form",
+              "config": {
+                "title": "Import novel"
+              }
+            }
           },
-          "format": "json"
+          "rest_api": {
+            "enabled": true,
+            "method": "POST",
+            "path": "/api/novels/import"
+          }
+        }
+      },
+      "timeout": {
+        "after": {
+          "minutes": 10
         }
       }
     },
     {
       "do": [
+        {
+          "requestInput": {
+            "set": "${ .request.body // . }"
+          }
+        },
+        {
+          "normalizeInput": {
+            "set": "${ if (.chapter_from != null and .chapter_to != null and .chapter_to < .chapter_from) then error(\"Last chapter must be greater than or equal to first chapter\") else . + {novel_url:(.novel_url | rtrimstr(\"/\"))} end }",
+            "input": {
+              "schema": {
+                "format": "json",
+                "document": {
+                  "type": "object",
+                  "required": [
+                    "novel_url"
+                  ],
+                  "properties": {
+                    "novel_url": {
+                      "type": "string",
+                      "title": "Novel URL",
+                      "pattern": "^https://brightnovels\\.com/series/[A-Za-z0-9_-]+/?$"
+                    },
+                    "chapter_from": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "First chapter"
+                    },
+                    "chapter_to": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "Last chapter"
+                    },
+                    "auto_update": {
+                      "type": "boolean",
+                      "title": "Refresh automatically"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "loadStoredNovel": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "list",
+              "table": "local_novels_novel",
+              "filter": "${ {source:.novel_url} }",
+              "input": "${ . }"
+            },
+            "output": {
+              "as": "${ $input + {stored:($output | first)} }"
+            }
+          }
+        },
         {
           "allowBrightnovels": {
             "call": "http",
@@ -331,7 +530,7 @@
         },
         {
           "parseSeries": {
-            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // ((.last_downloaded_chapter // 0) + 1)),\n    chapterTo: (.chapter_to // 999999),\n    chapters: [],\n    downloaded: []\n  }\n}"
+            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // ((.stored.last_downloaded_chapter // 0) + 1)),\n    chapterTo: (.chapter_to // 999999),\n    stored: .stored,\n    autoUpdateExplicit: (.auto_update != null),\n    autoUpdate: (if .auto_update != null then (.auto_update) else (.stored.auto_update // false) end),\n    lastDownloaded: (.stored.last_downloaded_chapter // 0),\n    chapters: [],\n    downloaded: []\n  }\n}"
           }
         },
         {
@@ -353,7 +552,7 @@
         },
         {
           "prepareChapters": {
-            "set": "${\n  {\n    series: .seriesPage.props.series,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
+            "set": "${\n  {\n    series: .seriesPage.props.series,\n    autoUpdate: .autoUpdate,\n    autoUpdateExplicit: .autoUpdateExplicit,\n    lastDownloaded: .lastDownloaded,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
           }
         },
         {
@@ -363,7 +562,7 @@
                 "fetchChapter": {
                   "call": "http",
                   "output": {
-                    "as": "$input + {\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
+                    "as": "$input + {\n  lastDownloaded: (if $chapter.chapterNumber > $input.lastDownloaded then $chapter.chapterNumber else $input.lastDownloaded end),\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
                   },
                   "with": {
                     "endpoint": "${ \"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug }",
@@ -385,7 +584,19 @@
         },
         {
           "result": {
-            "set": "${\n  {\n    title: .series.title,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+            "set": "${\n  {\n    title: .series.title,\n    auto_update: .autoUpdate,\n    auto_update_explicit: .autoUpdateExplicit,\n    last_downloaded_chapter: .lastDownloaded,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+          }
+        },
+        {
+          "saveRecords": {
+            "run": {
+              "workflow": {
+                "namespace": "local",
+                "name": "save-brightnovels",
+                "version": "0.2.0",
+                "input": "${ . }"
+              }
+            }
           }
         }
       ],
@@ -393,44 +604,232 @@
         "dsl": "1.0.3",
         "name": "refresh-brightnovels",
         "namespace": "local",
-        "version": "0.1.0"
-      },
-      "input": {
-        "from": ".",
-        "schema": {
-          "document": {
-            "properties": {
-              "chapter_from": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "chapter_to": {
-                "minimum": 1,
-                "type": "integer"
-              },
-              "last_downloaded_chapter": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "novel_url": {
-                "format": "uri",
-                "type": "string"
+        "version": "0.2.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "local.novels",
+            "description": "Load saved progress and download new chapters."
+          },
+          "ui": {
+            "input_schema": {
+              "type": "object",
+              "required": [
+                "novel_url"
+              ],
+              "properties": {
+                "novel_url": {
+                  "type": "string",
+                  "title": "Novel URL",
+                  "pattern": "^https://brightnovels\\.com/series/[A-Za-z0-9_-]+/?$"
+                },
+                "chapter_from": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "First chapter"
+                },
+                "chapter_to": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "Last chapter"
+                }
               }
             },
-            "required": [
-              "novel_url"
-            ],
-            "type": "object"
+            "view": {
+              "type": "form",
+              "config": {
+                "title": "Refresh novel"
+              }
+            }
           },
-          "format": "json"
+          "rest_api": {
+            "enabled": true,
+            "method": "POST",
+            "path": "/api/novels/refresh"
+          }
+        }
+      },
+      "timeout": {
+        "after": {
+          "minutes": 10
         }
       }
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "local",
+        "name": "save-brightnovels",
+        "version": "0.2.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "local.novels",
+            "description": "Atomically save a crawled novel and its chapters."
+          }
+        }
+      },
+      "input": {
+        "schema": {
+          "format": "json",
+          "document": {
+            "type": "object",
+            "required": [
+              "title",
+              "source",
+              "chapters",
+              "last_downloaded_chapter"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^https://brightnovels\\.com/series/[A-Za-z0-9_-]+$"
+              },
+              "last_downloaded_chapter": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "chapters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "number",
+                    "name",
+                    "url",
+                    "body"
+                  ],
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "body": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "do": [
+        {
+          "timestamp": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "clock.now"
+            },
+            "output": {
+              "as": "${ $input + {checkedAt:$output} }"
+            }
+          }
+        },
+        {
+          "persist": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database.batch",
+              "operations": "${ [{operation:\"upsert\",table:\"local_novels_novel\",conflictKey:\"source\",maxFields:[\"last_downloaded_chapter\"],preserveFields:(if .auto_update_explicit == true then [] else [\"auto_update\"] end),input:{title:.title,author:(.author // \"\"),synopsis:(.synopsis // \"\"),cover:(.cover // \"\"),source:.source,source_site:\"brightnovels.com\",last_downloaded_chapter:.last_downloaded_chapter,auto_update:(.auto_update == true),last_checked_at:.checkedAt}}] + (.chapters | map({operation:\"upsert\",table:\"local_novels_chapter\",conflictKey:\"source_url\",input:{novel_source:$input.source,number:.number,title:.name,source_url:.url,body:.body,downloaded_at:$input.checkedAt}})) }",
+              "input": "${ . }",
+              "returnInput": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "local",
+        "name": "refresh-auto-novels",
+        "version": "0.2.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "local.novels",
+            "description": "Refresh novels opted into automatic updates every 30 minutes."
+          }
+        }
+      },
+      "schedule": {
+        "every": {
+          "minutes": 30
+        }
+      },
+      "do": [
+        {
+          "novels": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "table": "local_novels_novel",
+              "operation": "list",
+              "filter": {
+                "auto_update": true
+              }
+            }
+          }
+        },
+        {
+          "refreshEach": {
+            "for": {
+              "each": "novel",
+              "in": "."
+            },
+            "do": [
+              {
+                "refresh": {
+                  "try": [
+                    {
+                      "download": {
+                        "run": {
+                          "workflow": {
+                            "namespace": "local",
+                            "name": "refresh-brightnovels",
+                            "version": "0.2.0",
+                            "input": "${ {novel_url:$novel.source} }"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "catch": {
+                    "as": "failure",
+                    "do": [
+                      {
+                        "failed": {
+                          "set": {
+                            "source": "${ $novel.source }",
+                            "error": "${ $failure }"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
     }
   ],
   "dependencies": [
     {
       "id": "ferrisflow.content-types",
-      "version": "^1.0.0"
+      "version": "^1.1.0"
     }
   ],
   "resources": [
@@ -468,7 +867,8 @@
               "label": "Source",
               "name": "source",
               "required": true,
-              "type": "text"
+              "type": "text",
+              "unique": true
             },
             {
               "label": "Source Site",
@@ -480,7 +880,8 @@
               "label": "Last Downloaded Chapter",
               "name": "last_downloaded_chapter",
               "required": false,
-              "type": "number"
+              "type": "integer",
+              "minimum": 0
             },
             {
               "label": "Auto Update",
@@ -515,7 +916,8 @@
               "label": "Number",
               "name": "number",
               "required": true,
-              "type": "number"
+              "type": "integer",
+              "minimum": 1
             },
             {
               "label": "Title",
@@ -527,7 +929,8 @@
               "label": "Source Url",
               "name": "source_url",
               "required": true,
-              "type": "text"
+              "type": "text",
+              "unique": true
             },
             {
               "label": "Body",

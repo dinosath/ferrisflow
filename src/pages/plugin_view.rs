@@ -404,9 +404,19 @@ fn PluginDataTableView(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let create_action =
-        definition.get("config").and_then(|config| config.get("createAction")).cloned();
-    let row_action = definition.get("config").and_then(|config| config.get("rowAction")).cloned();
+    let config = &definition["config"];
+    let mut actions = config["actions"].as_array().cloned().unwrap_or_default();
+    if let Some(action) = config.get("createAction") {
+        let mut action = action.clone();
+        action["label"] = Value::String("+ Create".into());
+        actions.push(action);
+    }
+    let mut row_actions = config["rowActions"].as_array().cloned().unwrap_or_default();
+    if let Some(action) = config.get("rowAction") {
+        let mut action = action.clone();
+        action["label"] = Value::String("Edit".into());
+        row_actions.push(action);
+    }
     let mut selected = use_signal(|| None::<(i32, String)>);
     let mut initial_input = use_signal(|| "{}".to_owned());
     let view_name = definition.get("name").and_then(Value::as_str).unwrap_or("Data table");
@@ -414,9 +424,9 @@ fn PluginDataTableView(
             section { class: "panel plugin-view-workflows",
                 div { class: "plugins-heading",
                     div { span { class: "data-eyebrow", "{plugin_name} / DATA TABLE" } h2 { "{view_name}" } }
-                    if let Some(action) = create_action.as_ref() {
+                    for action in actions.iter() {
                         if let Some(workflow) = action.get("workflow").and_then(Value::as_str).and_then(|name| workflow_named(&workflows, name)) {
-                            button { class: "button button-primary", onclick: { let input = action.get("input").cloned().unwrap_or_else(|| serde_json::json!({})); move |_| { initial_input.set(input.to_string()); selected.set(Some((workflow.id, "Create".to_owned()))); } }, "+ Create" }
+                            button { class: "button button-primary", onclick: { let input = action_input(action, &serde_json::json!({})); move |_| { initial_input.set(input.to_string()); selected.set(Some((workflow.id, "Run".to_owned()))); } }, {action["label"].as_str().unwrap_or("Run")} }
                         }
                     }
                 }
@@ -424,7 +434,7 @@ fn PluginDataTableView(
                     Some(Ok(rows)) => rsx! {
                         DataTable {
                             toolbar: rsx! {},
-                            columns: { let mut labels=columns.iter().map(|column|column["label"].as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>(); if row_action.is_some(){labels.push("Actions".into());} labels },
+                            columns: { let mut labels=columns.iter().map(|column|column["label"].as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>(); if !row_actions.is_empty(){labels.push("Actions".into());} labels },
                             row_ids: rows.iter().enumerate().map(|(index,row)|row.get("id").or_else(||row.get("uid")).map(ToString::to_string).unwrap_or(index.to_string())).collect::<Vec<_>>(),
                             empty_message: "No entries yet.".to_owned(),
                             for (index,row) in rows.iter().enumerate() {
@@ -432,9 +442,11 @@ fn PluginDataTableView(
                                     for (column_index,column) in columns.iter().enumerate() {
                                         DataTableCell { index: column_index, {mapped_value(row, column.get("mapping").and_then(Value::as_str).unwrap_or_default())} }
                                     }
-                                    if let Some(action) = row_action.as_ref() {
-                                        DataTableCell { index: columns.len(), if let Some(workflow) = action.get("workflow").and_then(Value::as_str).and_then(|name| workflow_named(&workflows, name)) {
-                                            button { class: "button button-quiet", onclick: { let row = row.clone(); move |_| { initial_input.set(row.to_string()); selected.set(Some((workflow.id, "Edit".to_owned()))); } }, "Edit" }
+                                    if !row_actions.is_empty() {
+                                        DataTableCell { index: columns.len(), for action in row_actions.iter() {
+                                            if let Some(workflow) = action.get("workflow").and_then(Value::as_str).and_then(|name| workflow_named(&workflows, name)) {
+                                                button { class: "button button-quiet", onclick: { let input = action_input(action, row); move |_| { initial_input.set(input.to_string()); selected.set(Some((workflow.id, "Run".to_owned()))); } }, {action["label"].as_str().unwrap_or("Run")} }
+                                            }
                                         } }
                                     }
                                 }
@@ -451,8 +463,30 @@ fn PluginDataTableView(
             Shell { active: "plugins", header: "Plugin data table", intro: "Plugin-provided data table", actions: rsx! {}, {content} }
         }
         if let Some((workflow_id, _label)) = selected() {
-            WorkflowRunDialog { workflows: workflows.clone(), selected_workflow: Some(workflow_id), initial_input: initial_input(), on_close: move |_| selected.set(None), on_complete: move |_| { rows.restart(); selected.set(None); } }
+            WorkflowRunDialog { workflows: workflows.clone(), selected_workflow: Some(workflow_id), initial_input: initial_input(), on_close: move |_| selected.set(None), on_complete: move |_| { rows.restart(); } }
         }
+    }
+}
+
+fn action_input(action: &Value, row: &Value) -> Value {
+    if let Some(mapping) = action["inputMapping"].as_object() {
+        Value::Object(
+            mapping
+                .iter()
+                .map(|(key, path)| {
+                    let value = path
+                        .as_str()
+                        .unwrap_or_default()
+                        .split('.')
+                        .try_fold(row, |value, part| value.get(part))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    (key.clone(), value)
+                })
+                .collect(),
+        )
+    } else {
+        action.get("input").cloned().unwrap_or_else(|| row.clone())
     }
 }
 

@@ -1,11 +1,11 @@
 //! Database and workflow primitives. Resource semantics belong to plugin workflows.
 use crate::models::{plugin, workflow};
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, DatabaseBackend, EntityTrait, IntoActiveModel, Set,
-    Statement,
+    ActiveModelTrait, ConnectionTrait, DatabaseBackend, EntityTrait, IntoActiveModel, QueryOrder,
+    Set, Statement, TransactionSession, TransactionTrait,
 };
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 fn ident(s: &str) -> Result<String, String> {
     if s.is_empty()
@@ -112,10 +112,23 @@ pub(crate) async fn database<C: ConnectionTrait>(db: &C, args: &Value) -> Result
         ))
         .await
         .map_err(err)?;
+        // Indexes also apply when a previously installed table already exists.
+        for column in columns.iter().filter(|column| column["unique"] == true) {
+            let name = required(column, "name")?;
+            let index = ident(&format!("{table}_{name}_unique"))?;
+            db.execute_unprepared(&format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {index} ON {quoted} ({})",
+                ident(name)?
+            ))
+            .await
+            .map_err(err)?;
+        }
         return Ok(if args["returnInput"] == true { original } else { json!({"table":table}) });
     }
     let primary = args["primaryKey"].as_str().unwrap_or("id");
     let pk = ident(primary)?;
+    let conflict = args["conflictKey"].as_str().unwrap_or(primary);
+    let conflict_key = ident(conflict)?;
     let mut key = args.get("key").cloned().or_else(|| input.get(primary).cloned());
     if args["keyType"] == "integer"
         && let Some(value) = key.as_ref().and_then(Value::as_str)
@@ -174,8 +187,19 @@ pub(crate) async fn database<C: ConnectionTrait>(db: &C, args: &Value) -> Result
                 if operation != "update" {
                     values.push(bind(value)?);
                 }
-                if name != primary {
-                    updates.push(format!("{} = EXCLUDED.{}", ident(name)?, ident(name)?));
+                let preserved = args["preserveFields"]
+                    .as_array()
+                    .is_some_and(|fields| fields.iter().any(|field| field.as_str() == Some(name)));
+                if name != primary && name != conflict && !preserved {
+                    let field = ident(name)?;
+                    let maximum = args["maxFields"].as_array().is_some_and(|fields| {
+                        fields.iter().any(|field| field.as_str() == Some(name))
+                    });
+                    updates.push(if maximum {
+                        format!("{field} = CASE WHEN EXCLUDED.{field} > {quoted}.{field} OR {quoted}.{field} IS NULL THEN EXCLUDED.{field} ELSE {quoted}.{field} END")
+                    } else {
+                        format!("{field} = EXCLUDED.{field}")
+                    });
                 }
             }
             if operation == "update" {
@@ -199,9 +223,12 @@ pub(crate) async fn database<C: ConnectionTrait>(db: &C, args: &Value) -> Result
                     values.join(","),
                     if operation == "upsert" {
                         if updates.is_empty() {
-                            format!(" ON CONFLICT ({pk}) DO NOTHING")
+                            format!(" ON CONFLICT ({conflict_key}) DO NOTHING")
                         } else {
-                            format!(" ON CONFLICT ({pk}) DO UPDATE SET {}", updates.join(","))
+                            format!(
+                                " ON CONFLICT ({conflict_key}) DO UPDATE SET {}",
+                                updates.join(",")
+                            )
                         }
                     } else {
                         String::new()
@@ -227,7 +254,13 @@ pub(crate) async fn database<C: ConnectionTrait>(db: &C, args: &Value) -> Result
                 .iter()
                 .map(|row| {
                     let name: String = row.try_get("", "name").map_err(err)?;
-                    Ok(format!("'{}', {}", name, ident(&name)?))
+                    let kind: String = row.try_get("", "type").map_err(err)?;
+                    let value = if kind.eq_ignore_ascii_case("BOOLEAN") {
+                        format!("json(CASE WHEN {0} IS NULL THEN 'null' WHEN {0} THEN 'true' ELSE 'false' END)", ident(&name)?)
+                    } else {
+                        ident(&name)?
+                    };
+                    Ok(format!("'{name}', {value}"))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             format!("SELECT json_object({}) AS payload FROM ({sql})", fields.join(","))
@@ -342,7 +375,9 @@ fn render(value: &Value, parameters: &Value) -> Result<Value, String> {
 // retaining a transaction and preventing commit or rollback.
 pub(crate) struct Function<C>(pub std::sync::Weak<C>);
 #[async_trait::async_trait]
-impl<C: ConnectionTrait + Send + Sync + 'static> ows::service::FunctionInvoker for Function<C> {
+impl<C: ConnectionTrait + TransactionTrait + Send + Sync + 'static> ows::service::FunctionInvoker
+    for Function<C>
+{
     async fn invoke(
         &self, request: ows::service::FunctionRequest<'_>,
     ) -> Result<Value, ows_core::WorkflowError> {
@@ -355,11 +390,27 @@ impl<C: ConnectionTrait + Send + Sync + 'static> ows::service::FunctionInvoker f
         })
     }
 }
-impl<C: ConnectionTrait> Function<C> {
+impl<C: ConnectionTrait + TransactionTrait> Function<C> {
     async fn invoke_inner(&self, args: &Value) -> Result<Value, String> {
         let db = self.0.upgrade().ok_or("Primitive database context expired")?;
         match required(args, "primitive")? {
             "database" => database(&*db, args).await,
+            "database.batch" => {
+                let operations =
+                    args["operations"].as_array().ok_or("operations must be an array")?;
+                let transaction = db.begin().await.map_err(err)?;
+                let mut results = Vec::new();
+                for operation in operations {
+                    results.push(database(&transaction, operation).await?);
+                }
+                transaction.commit().await.map_err(err)?;
+                Ok(if args["returnInput"] == true {
+                    args["input"].clone()
+                } else {
+                    Value::Array(results)
+                })
+            }
+            "clock.now" => Ok(json!(chrono::Utc::now().to_rfc3339())),
             "workflow.save" => save_workflow(&*db, args["definition"].clone()).await,
             "workflow.instantiate" => {
                 let row = plugin::Entity::find_by_id(required(args, "plugin")?)
@@ -386,14 +437,11 @@ impl<C: ConnectionTrait> Function<C> {
     }
 }
 
-pub(crate) async fn run<C: ConnectionTrait + Send + Sync + 'static>(
+pub(crate) async fn run<C: ConnectionTrait + TransactionTrait + Send + Sync + 'static>(
     db: Arc<C>, definition: &Value, input: Value,
 ) -> Result<Value, String> {
+    let runtime = runtime(db.clone(), definition.clone()).await?;
     let definition = crate::ows::parse_ows_document(&definition.to_string())?;
-    let runtime = ows::Runtime::builder()
-        .register_function("ferrisflow.primitive", Arc::new(Function(Arc::downgrade(&db))))
-        .build()
-        .map_err(err)?;
     let workflow = runtime.register_definition(&definition).map_err(err)?;
     runtime.execute(workflow, input).await.map_err(err)?.wait().await.map_err(|error| {
         error
@@ -403,4 +451,133 @@ pub(crate) async fn run<C: ConnectionTrait + Send + Sync + 'static>(
             .map(|detail| format!("{error}: {detail}"))
             .unwrap_or_else(|| error.to_string())
     })
+}
+
+pub(crate) async fn definitions<C: ConnectionTrait>(db: &C) -> Result<Vec<Value>, String> {
+    let enabled = plugin::Entity::find()
+        .all(db)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .filter(|row| row.enabled)
+        .map(|row| row.uid)
+        .collect::<Vec<_>>();
+    workflow::Entity::find()
+        .order_by_asc(workflow::Column::Id)
+        .all(db)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .filter(|row| row.active)
+        .map(|row| serde_json::from_str::<Value>(&row.definition_json).map_err(err))
+        .filter(|result| {
+            !result.as_ref().is_ok_and(|definition| {
+                definition
+                    .pointer("/document/metadata/ferrisflow/plugin")
+                    .and_then(Value::as_str)
+                    .is_some_and(|owner| !enabled.iter().any(|id| id == owner))
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn runtime<C: ConnectionTrait + TransactionTrait + Send + Sync + 'static>(
+    db: Arc<C>, definition: Value,
+) -> Result<ows::Runtime, String> {
+    let available = definitions(&*db).await?;
+    if let Some(owner) =
+        definition.pointer("/document/metadata/ferrisflow/plugin").and_then(Value::as_str)
+        && !plugin::Entity::find_by_id(owner)
+            .one(&*db)
+            .await
+            .map_err(err)?
+            .is_some_and(|plugin| plugin.enabled)
+    {
+        return Err(format!("Plugin '{owner}' is not installed or enabled"));
+    }
+    let definitions = reachable(&available, definition)?;
+    let hosts: Vec<String> = definitions
+        .iter()
+        .flat_map(|definition| super::workflow::workflow_endpoint_hosts(&definition.to_string()))
+        .collect();
+    let runtime = ows::Runtime::builder()
+        .with_policy(ows_core::RuntimePolicy {
+            allow_network: !hosts.is_empty(),
+            allowed_hosts: hosts,
+            allowed_schemes: vec!["https".into(), "http".into()],
+            ..Default::default()
+        })
+        .register_function("ferrisflow.primitive", Arc::new(Function(Arc::downgrade(&db))))
+        .build()
+        .map_err(err)?;
+    for definition in definitions {
+        runtime
+            .register_definition(&crate::ows::parse_ows_document(&definition.to_string())?)
+            .map_err(|error| {
+                format!(
+                    "Could not compile {}: {}",
+                    definition["document"]["name"],
+                    error.problem.detail.as_deref().unwrap_or(&error.problem.title)
+                )
+            })?;
+    }
+    Ok(runtime)
+}
+
+// Register only the root and its called workflows. Unrelated workflows must not
+// expand the network allowlist or prevent this workflow from compiling.
+fn reachable(available: &[Value], root: Value) -> Result<Vec<Value>, String> {
+    fn references(value: &Value, output: &mut Vec<Value>) {
+        if let Some(reference) = value.pointer("/run/workflow") {
+            output.push(reference.clone());
+        }
+        match value {
+            Value::Object(map) => {
+                for value in map.values() {
+                    references(value, output);
+                }
+            }
+            Value::Array(items) => {
+                for value in items {
+                    references(value, output);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut pending = vec![root];
+    let mut visited = HashSet::new();
+    let mut definitions = Vec::new();
+    while let Some(mut definition) = pending.pop() {
+        let document = &definition["document"];
+        let identity =
+            format!("{}/{}/{}", document["namespace"], document["name"], document["version"]);
+        if !visited.insert(identity) {
+            continue;
+        }
+        let mut called = Vec::new();
+        references(&definition, &mut called);
+        for reference in called {
+            let child = available
+                .iter()
+                .find(|candidate| {
+                    ["namespace", "name", "version"]
+                        .iter()
+                        .all(|key| candidate["document"][key] == reference[key])
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Called workflow '{}' is not active or its plugin is disabled",
+                        reference["name"]
+                    )
+                })?;
+            pending.push(child.clone());
+        }
+        if !definitions.is_empty() {
+            // A child schedule belongs to its own registration, not this call.
+            definition.as_object_mut().unwrap().remove("schedule");
+        }
+        definitions.push(definition);
+    }
+    Ok(definitions)
 }

@@ -13,7 +13,6 @@ use axum::{
     http::{HeaderMap, HeaderValue, Request, StatusCode},
     response::IntoResponse,
 };
-use ows::Runtime;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
@@ -515,22 +514,13 @@ pub(crate) async fn run_ows(
 
     let result = async {
         let definition = parse_ows_document(&request.definition_json)?;
-        let allowed_hosts = workflow_endpoint_hosts(&request.definition_json);
-        let policy = ows_core::RuntimePolicy {
-            allow_network: !allowed_hosts.is_empty(),
-            allowed_hosts,
-            allowed_schemes: vec!["http".to_string(), "https".to_string()],
-            ..Default::default()
-        };
         let database = Arc::new(state.db.clone());
-        let runtime = Runtime::builder()
-            .with_policy(policy)
-            .register_function(
-                "ferrisflow.primitive",
-                Arc::new(super::primitives::Function(Arc::downgrade(&database))),
-            )
-            .build()
-            .map_err(|error| format!("could not start OWS runtime: {error}"))?;
+        let runtime = super::primitives::runtime(
+            database.clone(),
+            serde_json::from_str(&normalize_ows_json(&request.definition_json)?)
+                .map_err(|error| error.to_string())?,
+        )
+        .await?;
         let workflow = runtime
             .register_definition(&definition)
             .map_err(|error| format!("could not compile OWS workflow: {error}"))?;
@@ -609,7 +599,7 @@ pub(crate) async fn run_ows(
     })))
 }
 
-fn workflow_endpoint_hosts(definition_json: &str) -> Vec<String> {
+pub(crate) fn workflow_endpoint_hosts(definition_json: &str) -> Vec<String> {
     fn collect(value: &serde_json::Value, hosts: &mut Vec<String>) {
         match value {
             serde_json::Value::Object(object) => {

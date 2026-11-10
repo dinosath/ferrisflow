@@ -12,6 +12,8 @@ pub mod models {
 pub mod app_state;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ows;
+#[cfg(not(target_arch = "wasm32"))]
+mod workflow_schedules;
 
 /// Build the axum [`Router`] with all routes and middleware.
 #[cfg(not(target_arch = "wasm32"))]
