@@ -318,6 +318,28 @@ async fn reconcile_database_triggers(
     })
 }
 
+pub async fn database_records(
+    State(state): State<AppState>, Path(table): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let (_, tables) = crate::db_triggers::list_tables(&state.db).await.map_err(|error| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error":error})))
+    })?;
+    let table_name = table.strip_prefix("public.").unwrap_or(&table);
+    if !tables.iter().any(|name| name == &table || name == table_name) {
+        return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error":"Table not found"}))));
+    }
+    let rows = super::primitives::database(
+        &state.db,
+        &serde_json::json!({"table":table_name,"operation":"list"}),
+    )
+    .await
+    .map_err(|error| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":error}))))?;
+    let columns = super::primitives::columns(&state.db, table_name)
+        .await
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":error}))))?;
+    Ok(Json(serde_json::json!({"columns":columns,"rows":rows})))
+}
+
 pub async fn database_tables(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -357,86 +379,6 @@ pub async fn execute_ows(
     State(state): State<AppState>, Json(request): Json<ExecuteRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     run_ows(&state, request).await
-}
-
-struct PluginDatabaseFunction(AppState);
-
-#[async_trait::async_trait]
-impl ows::service::FunctionInvoker for PluginDatabaseFunction {
-    async fn invoke(
-        &self, request: ows::service::FunctionRequest<'_>,
-    ) -> Result<serde_json::Value, ows_core::WorkflowError> {
-        let args = request.args;
-        let resource = args
-            .get("resource")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| database_function_error("resource is required"))?;
-        let operation = args
-            .get("operation")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| database_function_error("operation is required"))?;
-        let mut input = args.get("input").cloned().unwrap_or_else(|| serde_json::json!({}));
-        let mut params = serde_json::Map::new();
-        if let Some(rest_request) = input.get("request") {
-            if let Some(path_params) =
-                rest_request.get("params").and_then(serde_json::Value::as_object)
-            {
-                params.extend(path_params.clone());
-            }
-            input = rest_request
-                .get("body")
-                .filter(|body| !body.is_null())
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            if let Some(object) = input.as_object_mut() {
-                for (key, value) in params {
-                    object.entry(key).or_insert(value);
-                }
-            } else if !params.is_empty() {
-                input = serde_json::Value::Object(params);
-            }
-        }
-
-        let uid =
-            args.get("uid").and_then(serde_json::Value::as_str).map(str::to_owned).or_else(|| {
-                input.get("uid").and_then(serde_json::Value::as_str).map(str::to_owned)
-            });
-        let id = args
-            .get("id")
-            .and_then(|value| {
-                value.as_i64().or_else(|| value.as_str().and_then(|id| id.parse::<i64>().ok()))
-            })
-            .or_else(|| {
-                input.get("id").and_then(|value| {
-                    value.as_i64().or_else(|| value.as_str().and_then(|id| id.parse::<i64>().ok()))
-                })
-            })
-            .and_then(|id| i32::try_from(id).ok());
-        crate::controllers::plugin_database::execute(
-            &self.0.db,
-            resource,
-            operation,
-            uid.as_deref(),
-            id,
-            input,
-        )
-        .await
-        .map_err(|message| {
-            ows_core::WorkflowError::new(
-                ows_core::ErrorKind::Runtime,
-                ows_core::ProblemDetails::new("about:blank", "Database operation failed", 500)
-                    .with_detail(message),
-            )
-        })
-    }
-}
-
-fn database_function_error(message: &str) -> ows_core::WorkflowError {
-    ows_core::WorkflowError::new(
-        ows_core::ErrorKind::Runtime,
-        ows_core::ProblemDetails::new("about:blank", "Invalid database operation", 400)
-            .with_detail(message.to_owned()),
-    )
 }
 
 /// Dispatch configured REST exposure routes to their saved workflow.
@@ -580,11 +522,12 @@ pub(crate) async fn run_ows(
             allowed_schemes: vec!["http".to_string(), "https".to_string()],
             ..Default::default()
         };
+        let database = Arc::new(state.db.clone());
         let runtime = Runtime::builder()
             .with_policy(policy)
             .register_function(
-                "ferrisflow.plugin.database",
-                Arc::new(PluginDatabaseFunction(state.clone())),
+                "ferrisflow.primitive",
+                Arc::new(super::primitives::Function(Arc::downgrade(&database))),
             )
             .build()
             .map_err(|error| format!("could not start OWS runtime: {error}"))?;
@@ -717,6 +660,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/api/workflows", get(list).post(create))
         .route("/api/workflows/validate", axum::routing::post(validate_ows))
         .route("/api/database/tables", get(database_tables))
+        .route("/api/database/tables/{table}/records", get(database_records))
         .route("/api/database/events/listen", axum::routing::post(listen_for_database_event))
         .route("/api/workflows/execute", axum::routing::post(execute_ows))
         .route("/api/executions", get(list_executions).post(execute_saved_workflow))

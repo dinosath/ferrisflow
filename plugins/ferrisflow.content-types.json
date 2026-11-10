@@ -41,12 +41,20 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "registry": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-types",
+              "primitive": "database",
               "operation": "list",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
               "input": "${ . }"
+            },
+            "output": {
+              "as": "${ map(select(.uid != \"core.page\")) }"
             }
           }
         }
@@ -107,12 +115,122 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "definition": {
+            "set": {
+              "definition": "${ .definition // .request.body // . }"
+            }
+          }
+        },
+        {
+          "createTable": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-types",
-              "operation": "create",
-              "input": "${ . }"
+              "primitive": "database",
+              "operation": "ensure",
+              "table": "${ .definition.uid }",
+              "input": "${ . }",
+              "returnInput": true,
+              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end), required: (.required // false)})) }"
+            },
+            "input": {
+              "schema": {
+                "format": "json",
+                "document": {
+                  "type": "object",
+                  "required": [
+                    "definition"
+                  ],
+                  "properties": {
+                    "definition": {
+                      "type": "object",
+                      "required": [
+                        "uid",
+                        "display_name",
+                        "schema"
+                      ],
+                      "properties": {
+                        "uid": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "schema": {
+                          "type": "object",
+                          "required": [
+                            "fields"
+                          ],
+                          "properties": {
+                            "fields": {
+                              "type": "array",
+                              "minItems": 1,
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "name",
+                                  "label",
+                                  "type"
+                                ],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "enum": [
+                                      "text",
+                                      "richtext",
+                                      "number",
+                                      "boolean",
+                                      "date",
+                                      "email",
+                                      "json",
+                                      "enum"
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "registerType": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "upsert",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
+              "input": "${ {uid: .definition.uid, display_name: .definition.display_name, schema: .definition.schema} }",
+              "returnInput": true
+            }
+          }
+        },
+        {
+          "createCrudWorkflows": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "workflow.instantiate",
+              "plugin": "ferrisflow.content-types",
+              "template": "crud",
+              "parameters": "${ (.definition // .) + {ownerPlugin: (.plugin.id // \"ferrisflow.content-types\")} }"
             }
           }
         }
@@ -150,11 +268,16 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "registry": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-types",
+              "primitive": "database",
               "operation": "read",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
               "input": "${ . }"
             }
           }
@@ -216,11 +339,16 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "registry": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-types",
+              "primitive": "database",
               "operation": "update",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
               "input": "${ . }"
             }
           }
@@ -259,11 +387,16 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "registry": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-types",
+              "primitive": "database",
               "operation": "delete",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
               "input": "${ . }"
             }
           }
@@ -302,12 +435,18 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "records": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-records",
+              "primitive": "database",
               "operation": "list",
-              "input": "${ . }"
+              "table": "${ .request.params.uid // .uid }",
+              "input": "${ . }",
+              "ignoreFields": [
+                "uid"
+              ],
+              "keyType": "integer",
+              "fallback": "${ {\"primitive\": \"database\", \"operation\": \"list\", \"table\": \"content_entries\", \"keyType\": \"integer\", \"filter\": {\"content_type_uid\": (.request.params.uid // .uid)}, \"jsonFields\": {\"data\": \"data_json\"}, \"input\": (.)} }"
             }
           }
         }
@@ -345,12 +484,18 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "records": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-records",
+              "primitive": "database",
               "operation": "create",
-              "input": "${ . }"
+              "table": "${ .request.params.uid // .uid }",
+              "input": "${ . }",
+              "ignoreFields": [
+                "uid"
+              ],
+              "keyType": "integer",
+              "fallback": "${ {\"primitive\": \"database\", \"operation\": \"create\", \"table\": \"content_entries\", \"keyType\": \"integer\", \"filter\": {\"content_type_uid\": (.request.params.uid // .uid)}, \"jsonFields\": {\"data\": \"data_json\"}, \"input\": ({content_type_uid: (.request.params.uid // .uid), data: (.request.body.data // .data // .request.body // .), published: (.request.body.published // .published // false)})} }"
             }
           }
         }
@@ -388,12 +533,18 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "records": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-records",
+              "primitive": "database",
               "operation": "read",
-              "input": "${ . }"
+              "table": "${ .request.params.uid // .uid }",
+              "input": "${ . }",
+              "ignoreFields": [
+                "uid"
+              ],
+              "keyType": "integer",
+              "fallback": "${ {\"primitive\": \"database\", \"operation\": \"read\", \"table\": \"content_entries\", \"keyType\": \"integer\", \"filter\": {\"content_type_uid\": (.request.params.uid // .uid)}, \"jsonFields\": {\"data\": \"data_json\"}, \"input\": (.)} }"
             }
           }
         }
@@ -431,12 +582,18 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "records": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-records",
+              "primitive": "database",
               "operation": "update",
-              "input": "${ . }"
+              "table": "${ .request.params.uid // .uid }",
+              "input": "${ . }",
+              "ignoreFields": [
+                "uid"
+              ],
+              "keyType": "integer",
+              "fallback": "${ {\"primitive\": \"database\", \"operation\": \"update\", \"table\": \"content_entries\", \"keyType\": \"integer\", \"filter\": {\"content_type_uid\": (.request.params.uid // .uid)}, \"jsonFields\": {\"data\": \"data_json\"}, \"input\": ({content_type_uid: (.request.params.uid // .uid), data: (.request.body.data // .data // .request.body // .), published: (.request.body.published // .published // false)}), \"key\": (.request.params.id // .id)} }"
             }
           }
         }
@@ -474,12 +631,168 @@
       },
       "do": [
         {
-          "pluginDatabaseAction": {
-            "call": "ferrisflow.plugin.database",
+          "records": {
+            "call": "ferrisflow.primitive",
             "with": {
-              "resource": "content-records",
+              "primitive": "database",
               "operation": "delete",
-              "input": "${ . }"
+              "table": "${ .request.params.uid // .uid }",
+              "input": "${ . }",
+              "ignoreFields": [
+                "uid"
+              ],
+              "keyType": "integer",
+              "fallback": "${ {\"primitive\": \"database\", \"operation\": \"delete\", \"table\": \"content_entries\", \"keyType\": \"integer\", \"filter\": {\"content_type_uid\": (.request.params.uid // .uid)}, \"jsonFields\": {\"data\": \"data_json\"}, \"input\": (.)} }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-type-provision",
+        "version": "1.0.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types"
+          }
+        }
+      },
+      "do": [
+        {
+          "definition": {
+            "set": {
+              "definition": "${ .definition // .request.body // . }"
+            }
+          }
+        },
+        {
+          "createTable": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "ensure",
+              "table": "${ .definition.uid }",
+              "input": "${ . }",
+              "returnInput": true,
+              "columns": "${ [{name: \"id\", type: \"integer\", primaryKey: true}] + (.definition.schema.fields | map({name: .name, type: (if .type == \"number\" then \"number\" else if .type == \"boolean\" then \"boolean\" else \"string\" end end), required: (.required // false)})) }"
+            },
+            "input": {
+              "schema": {
+                "format": "json",
+                "document": {
+                  "type": "object",
+                  "required": [
+                    "definition"
+                  ],
+                  "properties": {
+                    "definition": {
+                      "type": "object",
+                      "required": [
+                        "uid",
+                        "display_name",
+                        "schema"
+                      ],
+                      "properties": {
+                        "uid": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "schema": {
+                          "type": "object",
+                          "required": [
+                            "fields"
+                          ],
+                          "properties": {
+                            "fields": {
+                              "type": "array",
+                              "minItems": 1,
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "name",
+                                  "label",
+                                  "type"
+                                ],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "enum": [
+                                      "text",
+                                      "richtext",
+                                      "number",
+                                      "boolean",
+                                      "date",
+                                      "email",
+                                      "json",
+                                      "enum"
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "registerType": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "upsert",
+              "table": "content_types",
+              "primaryKey": "uid",
+              "jsonFields": {
+                "schema": "schema_json"
+              },
+              "input": "${ {uid: .definition.uid, display_name: .definition.display_name, schema: .definition.schema} }",
+              "returnInput": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "ferrisflow_core",
+        "name": "content-type-crud",
+        "version": "1.0.0",
+        "metadata": {
+          "ferrisflow": {
+            "plugin": "ferrisflow.content-types"
+          }
+        }
+      },
+      "do": [
+        {
+          "createCrudWorkflows": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "workflow.instantiate",
+              "plugin": "ferrisflow.content-types",
+              "template": "crud",
+              "parameters": "${ (.definition // .) + {ownerPlugin: (.plugin.id // \"ferrisflow.content-types\")} }"
             }
           }
         }
@@ -554,5 +867,227 @@
       "title": "Content types",
       "view": "content-types-table"
     }
-  ]
+  ],
+  "resourceTypes": [
+    {
+      "name": "content-type",
+      "source": "database.contentTypes",
+      "create": "content-type-provision",
+      "postInstall": "content-type-crud"
+    }
+  ],
+  "workflowTemplates": {
+    "crud": [
+      {
+        "document": {
+          "dsl": "1.0.3",
+          "namespace": "ferrisflow_core",
+          "name": "{{uid}}-list",
+          "version": "1.0.0",
+          "metadata": {
+            "ferrisflow": {
+              "plugin": "{{ownerPlugin}}"
+            },
+            "rest_api": {
+              "enabled": true,
+              "method": "GET",
+              "path": "/api/collections/{{uid}}"
+            },
+            "ui": {
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "view": {
+                "type": "json",
+                "config": {}
+              }
+            }
+          }
+        },
+        "do": [
+          {
+            "record": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "list",
+                "table": "{{uid}}",
+                "input": "${ . }",
+                "keyType": "integer"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "document": {
+          "dsl": "1.0.3",
+          "namespace": "ferrisflow_core",
+          "name": "{{uid}}-create",
+          "version": "1.0.0",
+          "metadata": {
+            "ferrisflow": {
+              "plugin": "{{ownerPlugin}}"
+            },
+            "rest_api": {
+              "enabled": true,
+              "method": "POST",
+              "path": "/api/collections/{{uid}}"
+            },
+            "ui": {
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "view": {
+                "type": "json",
+                "config": {}
+              }
+            }
+          }
+        },
+        "do": [
+          {
+            "record": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "create",
+                "table": "{{uid}}",
+                "input": "${ . }",
+                "keyType": "integer"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "document": {
+          "dsl": "1.0.3",
+          "namespace": "ferrisflow_core",
+          "name": "{{uid}}-read",
+          "version": "1.0.0",
+          "metadata": {
+            "ferrisflow": {
+              "plugin": "{{ownerPlugin}}"
+            },
+            "rest_api": {
+              "enabled": true,
+              "method": "GET",
+              "path": "/api/collections/{{uid}}/{id}"
+            },
+            "ui": {
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "view": {
+                "type": "json",
+                "config": {}
+              }
+            }
+          }
+        },
+        "do": [
+          {
+            "record": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "read",
+                "table": "{{uid}}",
+                "input": "${ . }",
+                "keyType": "integer"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "document": {
+          "dsl": "1.0.3",
+          "namespace": "ferrisflow_core",
+          "name": "{{uid}}-update",
+          "version": "1.0.0",
+          "metadata": {
+            "ferrisflow": {
+              "plugin": "{{ownerPlugin}}"
+            },
+            "rest_api": {
+              "enabled": true,
+              "method": "PUT",
+              "path": "/api/collections/{{uid}}/{id}"
+            },
+            "ui": {
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "view": {
+                "type": "json",
+                "config": {}
+              }
+            }
+          }
+        },
+        "do": [
+          {
+            "record": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "update",
+                "table": "{{uid}}",
+                "input": "${ . }",
+                "keyType": "integer"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "document": {
+          "dsl": "1.0.3",
+          "namespace": "ferrisflow_core",
+          "name": "{{uid}}-delete",
+          "version": "1.0.0",
+          "metadata": {
+            "ferrisflow": {
+              "plugin": "{{ownerPlugin}}"
+            },
+            "rest_api": {
+              "enabled": true,
+              "method": "DELETE",
+              "path": "/api/collections/{{uid}}/{id}"
+            },
+            "ui": {
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              },
+              "view": {
+                "type": "json",
+                "config": {}
+              }
+            }
+          }
+        },
+        "do": [
+          {
+            "record": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "delete",
+                "table": "{{uid}}",
+                "input": "${ . }",
+                "keyType": "integer"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -56,7 +56,7 @@ pub(super) struct WorkflowChatResponse {
     pub definition_json: Option<String>,
 }
 
-fn api_url(path: &str) -> String {
+pub(super) fn api_url(path: &str) -> String {
     #[cfg(target_arch = "wasm32")]
     {
         let origin = web_sys::window()

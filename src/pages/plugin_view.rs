@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::components::data_table::{DataTable, DataTableCell, DataTableRow};
+
 use crate::{
     components::workflow_run::WorkflowRunDialog,
     pages::{
@@ -107,7 +109,9 @@ async fn load_plugin_page(plugin_id: String, page_id: String) -> Result<(String,
 }
 
 #[component]
-pub(crate) fn PluginViewPage(plugin_id: String, view_id: String) -> Element {
+pub(crate) fn PluginViewPage(
+    plugin_id: String, view_id: String, #[props(default = false)] embedded: bool,
+) -> Element {
     let plugin_id_for_load = plugin_id.clone();
     let view_id_for_load = view_id.clone();
     let view = use_server_future(move || {
@@ -116,7 +120,9 @@ pub(crate) fn PluginViewPage(plugin_id: String, view_id: String) -> Element {
     match view() {
         Some(Ok((plugin_name, definition, workflows))) => {
             match definition.get("type").and_then(Value::as_str).unwrap_or("workflow-list") {
-                "datatable" => rsx! { PluginDataTableView { plugin_name, definition, workflows } },
+                "datatable" => {
+                    rsx! { PluginDataTableView { plugin_name, definition, workflows, embedded } }
+                }
                 _ => {
                     rsx! { PluginWorkflowView { plugin_id, view_id, plugin_name, definition, workflows } }
                 }
@@ -381,7 +387,7 @@ async fn load_datatable_rows(path: String) -> Result<Vec<Value>, String> {
 
 #[component]
 fn PluginDataTableView(
-    plugin_name: String, definition: Value, workflows: Vec<Workflow>,
+    plugin_name: String, definition: Value, workflows: Vec<Workflow>, embedded: bool,
 ) -> Element {
     let source_path = definition
         .get("dataSource")
@@ -404,8 +410,7 @@ fn PluginDataTableView(
     let mut selected = use_signal(|| None::<(i32, String)>);
     let mut initial_input = use_signal(|| "{}".to_owned());
     let view_name = definition.get("name").and_then(Value::as_str).unwrap_or("Data table");
-    rsx! {
-        Shell { active: "plugins", header: "Plugin data table", intro: "Plugin-provided data table", actions: rsx! {},
+    let content = rsx! {
             section { class: "panel plugin-view-workflows",
                 div { class: "plugins-heading",
                     div { span { class: "data-eyebrow", "{plugin_name} / DATA TABLE" } h2 { "{view_name}" } }
@@ -417,25 +422,33 @@ fn PluginDataTableView(
                 }
                 match rows() {
                     Some(Ok(rows)) => rsx! {
-                        div { class: "shared-table-shell shared-table-scroll", table { class: "shared-data-table",
-                            thead { tr { for column in columns.iter() { { let label = column.get("label").and_then(Value::as_str).unwrap_or("").to_owned(); rsx! { th { class: "shared-table-heading", "{label}" } } } } if row_action.is_some() { th { "Actions" } } } }
-                            tbody {
-                                for row in rows.iter() { tr { class: "shared-table-row",
-                                    for column in columns.iter() { { let value = mapped_value(row, column.get("mapping").and_then(Value::as_str).unwrap_or_default()); rsx! { td { "{value}" } } } }
+                        DataTable {
+                            toolbar: rsx! {},
+                            columns: { let mut labels=columns.iter().map(|column|column["label"].as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>(); if row_action.is_some(){labels.push("Actions".into());} labels },
+                            row_ids: rows.iter().enumerate().map(|(index,row)|row.get("id").or_else(||row.get("uid")).map(ToString::to_string).unwrap_or(index.to_string())).collect::<Vec<_>>(),
+                            empty_message: "No entries yet.".to_owned(),
+                            for (index,row) in rows.iter().enumerate() {
+                                DataTableRow { id: row.get("id").or_else(||row.get("uid")).map(ToString::to_string).unwrap_or(index.to_string()), index,
+                                    for (column_index,column) in columns.iter().enumerate() {
+                                        DataTableCell { index: column_index, {mapped_value(row, column.get("mapping").and_then(Value::as_str).unwrap_or_default())} }
+                                    }
                                     if let Some(action) = row_action.as_ref() {
-                                        td { if let Some(workflow) = action.get("workflow").and_then(Value::as_str).and_then(|name| workflow_named(&workflows, name)) {
+                                        DataTableCell { index: columns.len(), if let Some(workflow) = action.get("workflow").and_then(Value::as_str).and_then(|name| workflow_named(&workflows, name)) {
                                             button { class: "button button-quiet", onclick: { let row = row.clone(); move |_| { initial_input.set(row.to_string()); selected.set(Some((workflow.id, "Edit".to_owned()))); } }, "Edit" }
                                         } }
                                     }
-                                } }
-                                if rows.is_empty() { tr { td { colspan: "8", class: "plugin-empty-note", "No entries yet." } } }
+                                }
                             }
-                        } }
+                        }
                     },
                     Some(Err(message)) => rsx! { ErrorPanel { message } },
                     None => rsx! { LoadingPanel {} },
                 }
             }
+    };
+    rsx! {
+        if embedded { {content} } else {
+            Shell { active: "plugins", header: "Plugin data table", intro: "Plugin-provided data table", actions: rsx! {}, {content} }
         }
         if let Some((workflow_id, _label)) = selected() {
             WorkflowRunDialog { workflows: workflows.clone(), selected_workflow: Some(workflow_id), initial_input: initial_input(), on_close: move |_| selected.set(None), on_complete: move |_| { rows.restart(); selected.set(None); } }

@@ -1,0 +1,550 @@
+{
+  "description": "Crawl Brightnovels into Novel and Chapter records and read them in Ferrisflow.",
+  "id": "local.novels",
+  "menuItems": [
+    {
+      "label": "Novels",
+      "path": "/plugins/local.novels/pages/local_novels_novel",
+      "icon": "table",
+      "page": "local_novels_novel"
+    },
+    {
+      "label": "Chapters",
+      "path": "/plugins/local.novels/pages/local_novels_chapter",
+      "icon": "table",
+      "page": "local_novels_chapter"
+    }
+  ],
+  "name": "Novels",
+  "pages": [
+    {
+      "id": "local_novels_novel",
+      "title": "Novels",
+      "view": "local_novels_novel-table"
+    },
+    {
+      "id": "local_novels_chapter",
+      "title": "Chapters",
+      "view": "local_novels_chapter-table"
+    }
+  ],
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "views": [
+    {
+      "id": "local_novels_novel-table",
+      "name": "Novels",
+      "type": "datatable",
+      "dataSource": {
+        "api": {
+          "method": "GET",
+          "path": "/api/collections/local_novels_novel"
+        }
+      },
+      "config": {
+        "columns": [
+          {
+            "label": "Title",
+            "mapping": "title"
+          },
+          {
+            "label": "Author",
+            "mapping": "author"
+          },
+          {
+            "label": "Synopsis",
+            "mapping": "synopsis"
+          },
+          {
+            "label": "Cover",
+            "mapping": "cover"
+          },
+          {
+            "label": "Source",
+            "mapping": "source"
+          },
+          {
+            "label": "Source Site",
+            "mapping": "source_site"
+          },
+          {
+            "label": "Last Downloaded Chapter",
+            "mapping": "last_downloaded_chapter"
+          },
+          {
+            "label": "Auto Update",
+            "mapping": "auto_update"
+          },
+          {
+            "label": "Last Checked At",
+            "mapping": "last_checked_at"
+          }
+        ],
+        "workflowNames": [
+          "local_novels_novel-list",
+          "local_novels_novel-create",
+          "local_novels_novel-read",
+          "local_novels_novel-update",
+          "local_novels_novel-delete"
+        ],
+        "createAction": {
+          "workflow": "local_novels_novel-create",
+          "input": {
+            "title": "",
+            "author": "",
+            "synopsis": "",
+            "cover": "",
+            "source": "",
+            "source_site": "",
+            "last_downloaded_chapter": 0,
+            "auto_update": false,
+            "last_checked_at": ""
+          }
+        },
+        "rowAction": {
+          "workflow": "local_novels_novel-update"
+        }
+      }
+    },
+    {
+      "id": "local_novels_chapter-table",
+      "name": "Chapters",
+      "type": "datatable",
+      "dataSource": {
+        "api": {
+          "method": "GET",
+          "path": "/api/collections/local_novels_chapter"
+        }
+      },
+      "config": {
+        "columns": [
+          {
+            "label": "Novel Source",
+            "mapping": "novel_source"
+          },
+          {
+            "label": "Number",
+            "mapping": "number"
+          },
+          {
+            "label": "Title",
+            "mapping": "title"
+          },
+          {
+            "label": "Source Url",
+            "mapping": "source_url"
+          },
+          {
+            "label": "Body",
+            "mapping": "body"
+          },
+          {
+            "label": "Downloaded At",
+            "mapping": "downloaded_at"
+          }
+        ],
+        "workflowNames": [
+          "local_novels_chapter-list",
+          "local_novels_chapter-create",
+          "local_novels_chapter-read",
+          "local_novels_chapter-update",
+          "local_novels_chapter-delete"
+        ],
+        "createAction": {
+          "workflow": "local_novels_chapter-create",
+          "input": {
+            "novel_source": "",
+            "number": 0,
+            "title": "",
+            "source_url": "",
+            "body": "",
+            "downloaded_at": ""
+          }
+        },
+        "rowAction": {
+          "workflow": "local_novels_chapter-update"
+        }
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "do": [
+        {
+          "allowBrightnovels": {
+            "call": "http",
+            "output": {
+              "as": "$input"
+            },
+            "with": {
+              "endpoint": "https://brightnovels.com/",
+              "headers": {
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "fetchSeries": {
+            "call": "http",
+            "output": {
+              "as": "$input + { seriesHtml: $output }"
+            },
+            "with": {
+              "endpoint": "${ .novel_url }",
+              "headers": {
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "parseSeries": {
+            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // 1),\n    chapterTo: (.chapter_to // 5),\n    chapters: [],\n    downloaded: []\n  }\n}"
+          }
+        },
+        {
+          "fetchChapters": {
+            "call": "http",
+            "output": {
+              "as": "$input + { chaptersResponse: $output }"
+            },
+            "with": {
+              "endpoint": "${ \"https://brightnovels.com/series/\" + .novelSlug + \"/chapters\" }",
+              "headers": {
+                "Accept": "application/json",
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "prepareChapters": {
+            "set": "${\n  {\n    series: .seriesPage.props.series,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
+          }
+        },
+        {
+          "downloadChapters": {
+            "do": [
+              {
+                "fetchChapter": {
+                  "call": "http",
+                  "output": {
+                    "as": "$input + {\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
+                  },
+                  "with": {
+                    "endpoint": "${ \"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug }",
+                    "headers": {
+                      "User-Agent": "ows-runtime example"
+                    },
+                    "method": "get",
+                    "output": "content"
+                  }
+                }
+              }
+            ],
+            "for": {
+              "at": "chapterIndex",
+              "each": "chapter",
+              "in": ".chapters"
+            }
+          }
+        },
+        {
+          "result": {
+            "set": "${\n  {\n    title: .series.title,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+          }
+        }
+      ],
+      "document": {
+        "dsl": "1.0.3",
+        "name": "crawl-brightnovels",
+        "namespace": "local",
+        "version": "0.1.0"
+      },
+      "input": {
+        "from": ".",
+        "schema": {
+          "document": {
+            "properties": {
+              "chapter_from": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "chapter_to": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "novel_url": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "novel_url"
+            ],
+            "type": "object"
+          },
+          "format": "json"
+        }
+      }
+    },
+    {
+      "do": [
+        {
+          "allowBrightnovels": {
+            "call": "http",
+            "output": {
+              "as": "$input"
+            },
+            "with": {
+              "endpoint": "https://brightnovels.com/",
+              "headers": {
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "fetchSeries": {
+            "call": "http",
+            "output": {
+              "as": "$input + { seriesHtml: $output }"
+            },
+            "with": {
+              "endpoint": "${ .novel_url }",
+              "headers": {
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "parseSeries": {
+            "set": "${\n  {\n    seriesPage: (\n      .seriesHtml\n      | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n      | split(\"&quot;\") | join(\"\\\"\") | fromjson\n    ),\n    novelUrl: .novel_url,\n    novelSlug: (.novel_url | split(\"/\") | map(select(. != \"\")) | last),\n    chapterFrom: (.chapter_from // ((.last_downloaded_chapter // 0) + 1)),\n    chapterTo: (.chapter_to // 999999),\n    chapters: [],\n    downloaded: []\n  }\n}"
+          }
+        },
+        {
+          "fetchChapters": {
+            "call": "http",
+            "output": {
+              "as": "$input + { chaptersResponse: $output }"
+            },
+            "with": {
+              "endpoint": "${ \"https://brightnovels.com/series/\" + .novelSlug + \"/chapters\" }",
+              "headers": {
+                "Accept": "application/json",
+                "User-Agent": "ows-runtime example"
+              },
+              "method": "get",
+              "output": "content"
+            }
+          }
+        },
+        {
+          "prepareChapters": {
+            "set": "${\n  {\n    series: .seriesPage.props.series,\n    novelUrl: .novelUrl,\n    novelSlug: .novelSlug,\n    chapterFrom: .chapterFrom,\n    chapterTo: .chapterTo,\n    chapters: (\n      .chaptersResponse.chapters\n      | map(select(.is_premium != true))\n      | reverse\n      | map(. + {\n          chapterNumber: ((.number // .chapter_number // (.name | split(\" \") | last)) | tonumber)\n        })\n      | map(select(.chapterNumber >= $input.chapterFrom and .chapterNumber <= $input.chapterTo))\n    ),\n    downloaded: []\n  }\n}"
+          }
+        },
+        {
+          "downloadChapters": {
+            "do": [
+              {
+                "fetchChapter": {
+                  "call": "http",
+                  "output": {
+                    "as": "$input + {\n  downloaded: (\n    $input.downloaded + [{\n      number: $chapter.chapterNumber,\n      slug: $chapter.slug,\n      name: $chapter.name,\n      url: (\"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug),\n      body: (\n        $output | split(\"data-page=\\\"\") | .[1] | split(\"\\\"\") | .[0]\n        | split(\"&quot;\") | join(\"\\\"\") | fromjson\n        | .props.chapter.content\n        | split(\"&amp;\") | join(\"&\")\n        | split(\"&lt;\") | join(\"<\")\n        | split(\"&gt;\") | join(\">\")\n        | split(\"&quot;\") | join(\"\\\"\")\n        | split(\"&#039;\") | join(\"'\")\n        | split(\"&apos;\") | join(\"'\")\n        | split(\"&nbsp;\") | join(\" \")\n      )\n    }]\n  )\n}"
+                  },
+                  "with": {
+                    "endpoint": "${ \"https://brightnovels.com/series/\" + $input.novelSlug + \"/\" + $chapter.slug }",
+                    "headers": {
+                      "User-Agent": "ows-runtime example"
+                    },
+                    "method": "get",
+                    "output": "content"
+                  }
+                }
+              }
+            ],
+            "for": {
+              "at": "chapterIndex",
+              "each": "chapter",
+              "in": ".chapters"
+            }
+          }
+        },
+        {
+          "result": {
+            "set": "${\n  {\n    title: .series.title,\n    author: .series.user.name,\n    synopsis: .series.description,\n    cover: (\"https://brightnovels.com/storage/\" + .series.cover.path),\n    source: .novelUrl,\n    chapter_from: .chapterFrom,\n    chapter_to: .chapterTo,\n    chapters: .downloaded\n  }\n}"
+          }
+        }
+      ],
+      "document": {
+        "dsl": "1.0.3",
+        "name": "refresh-brightnovels",
+        "namespace": "local",
+        "version": "0.1.0"
+      },
+      "input": {
+        "from": ".",
+        "schema": {
+          "document": {
+            "properties": {
+              "chapter_from": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "chapter_to": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "last_downloaded_chapter": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "novel_url": {
+                "format": "uri",
+                "type": "string"
+              }
+            },
+            "required": [
+              "novel_url"
+            ],
+            "type": "object"
+          },
+          "format": "json"
+        }
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "ferrisflow.content-types",
+      "version": "^1.0.0"
+    }
+  ],
+  "resources": [
+    {
+      "type": "content-type",
+      "definition": {
+        "display_name": "Novels",
+        "schema": {
+          "fields": [
+            {
+              "label": "Title",
+              "name": "title",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "label": "Author",
+              "name": "author",
+              "required": false,
+              "type": "text"
+            },
+            {
+              "label": "Synopsis",
+              "name": "synopsis",
+              "required": false,
+              "type": "richtext"
+            },
+            {
+              "label": "Cover",
+              "name": "cover",
+              "required": false,
+              "type": "text"
+            },
+            {
+              "label": "Source",
+              "name": "source",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "label": "Source Site",
+              "name": "source_site",
+              "required": false,
+              "type": "text"
+            },
+            {
+              "label": "Last Downloaded Chapter",
+              "name": "last_downloaded_chapter",
+              "required": false,
+              "type": "number"
+            },
+            {
+              "label": "Auto Update",
+              "name": "auto_update",
+              "required": false,
+              "type": "boolean"
+            },
+            {
+              "label": "Last Checked At",
+              "name": "last_checked_at",
+              "required": false,
+              "type": "date"
+            }
+          ]
+        },
+        "uid": "local_novels_novel"
+      }
+    },
+    {
+      "type": "content-type",
+      "definition": {
+        "display_name": "Chapters",
+        "schema": {
+          "fields": [
+            {
+              "label": "Novel Source",
+              "name": "novel_source",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "label": "Number",
+              "name": "number",
+              "required": true,
+              "type": "number"
+            },
+            {
+              "label": "Title",
+              "name": "title",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "label": "Source Url",
+              "name": "source_url",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "label": "Body",
+              "name": "body",
+              "required": true,
+              "type": "richtext"
+            },
+            {
+              "label": "Downloaded At",
+              "name": "downloaded_at",
+              "required": false,
+              "type": "date"
+            }
+          ]
+        },
+        "uid": "local_novels_chapter"
+      }
+    }
+  ]
+}

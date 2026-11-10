@@ -1,8 +1,9 @@
 pub mod ai;
 pub mod content_views;
 mod health;
-mod plugin_database;
+pub(crate) mod plugin_resources;
 pub mod plugins;
+pub(crate) mod primitives;
 pub mod workflow;
 
 use crate::app_state::AppState;

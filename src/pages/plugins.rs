@@ -396,8 +396,8 @@ pub(crate) fn PluginDetailPage(plugin_id: String) -> Element {
                         div { class: "plugins-heading",
                             div { span { class: "data-eyebrow", "PLUGIN / {plugin.uid}" } h2 { "{plugin.name}" } p { "Version {plugin.version}" } if let Some(description) = plugin.description.as_ref() { p { "{description}" } } }
                             div { class: "plugins-actions",
-                                button { class: "button button-quiet", r#type: "button", disabled: plugin.uid == "ferrisflow.content-types", onclick: move |_| { versioning.set(true); error.set(None); }, "New version" }
-                                button { class: "button button-ghost", r#type: "button", disabled: plugin.uid == "ferrisflow.content-types" || busy(), title: if plugin.uid == "ferrisflow.content-types" { "Built-in plugins stay enabled" } else { "" }, onclick: { let uid = plugin.uid.clone(); let enabled = !plugin.enabled; move |_| {
+                                button { class: "button button-quiet", r#type: "button", disabled: plugin.manifest["builtin"] == true, onclick: move |_| { versioning.set(true); error.set(None); }, "New version" }
+                                button { class: "button button-ghost", r#type: "button", disabled: (plugin.manifest["builtin"] == true) || busy(), title: if plugin.manifest["builtin"] == true { "Built-in plugins stay enabled" } else { "" }, onclick: { let uid = plugin.uid.clone(); let enabled = !plugin.enabled; move |_| {
                                     let uid = uid.clone();
                                     busy.set(true);
                                     spawn(async move {
@@ -406,7 +406,7 @@ pub(crate) fn PluginDetailPage(plugin_id: String) -> Element {
                                         busy.set(false);
                                     });
                                 }}, if plugin.enabled { "Disable" } else { "Enable" } }
-                                button { class: "button button-ghost plugin-delete", r#type: "button", disabled: plugin.uid == "ferrisflow.content-types" || busy(), title: if plugin.uid == "ferrisflow.content-types" { "Built-in plugins cannot be deleted" } else { "" }, onclick: { let uid = plugin.uid.clone(); move |_| {
+                                button { class: "button button-ghost plugin-delete", r#type: "button", disabled: (plugin.manifest["builtin"] == true) || busy(), title: if plugin.manifest["builtin"] == true { "Built-in plugins cannot be deleted" } else { "" }, onclick: { let uid = plugin.uid.clone(); move |_| {
                                     let uid = uid.clone();
                                     busy.set(true);
                                     spawn(async move {
