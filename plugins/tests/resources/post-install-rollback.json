@@ -1,0 +1,295 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-post-install-rollback",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Verify real import-transaction rollback after a provider hook creates database resources.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "installProvider": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/plugins",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "schemaVersion": 1,
+            "id": "tests.failing-provider",
+            "name": "Failing provider",
+            "version": "1.0.0",
+            "resourceTypes": [
+              {
+                "name": "failing-setting",
+                "create": "apply-failing-setting",
+                "postInstall": "fail-setting"
+              }
+            ],
+            "workflows": [
+              {
+                "document": {
+                  "dsl": "1.0.3",
+                  "namespace": "tests",
+                  "name": "apply-failing-setting",
+                  "version": "1.0.0"
+                },
+                "do": [
+                  {
+                    "table": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "ensure",
+                        "table": "rolled_back_settings",
+                        "columns": [
+                          {
+                            "name": "id",
+                            "type": "integer",
+                            "primaryKey": true
+                          },
+                          {
+                            "name": "value",
+                            "type": "string"
+                          }
+                        ],
+                        "input": "${ . }",
+                        "returnInput": true
+                      }
+                    }
+                  },
+                  {
+                    "record": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "create",
+                        "table": "rolled_back_settings",
+                        "input": "${ .definition }"
+                      }
+                    }
+                  },
+                  {
+                    "register": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "create",
+                        "table": "content_types",
+                        "primaryKey": "uid",
+                        "jsonFields": {
+                          "schema": "schema_json"
+                        },
+                        "input": {
+                          "uid": "rolled_back_settings",
+                          "display_name": "Rollback",
+                          "schema": {
+                            "fields": []
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "document": {
+                  "dsl": "1.0.3",
+                  "namespace": "tests",
+                  "name": "fail-setting",
+                  "version": "1.0.0"
+                },
+                "do": [
+                  {
+                    "fail": {
+                      "raise": {
+                        "error": {
+                          "type": "https://open-workflow-specification.org/spec/1.0.0/errors/runtime",
+                          "title": "Expected post-install failure",
+                          "status": 400
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "output": {
+          "as": "${ $input + {provider:$output} }"
+        }
+      }
+    },
+    {
+      "postInstall": {
+        "try": [
+          {
+            "attempt": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/plugins",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "schemaVersion": 1,
+                  "id": "tests.rollback-consumer",
+                  "name": "Rollback consumer",
+                  "version": "1.0.0",
+                  "dependencies": [
+                    {
+                      "id": "tests.failing-provider",
+                      "version": "^1.0"
+                    }
+                  ],
+                  "resources": [
+                    {
+                      "type": "failing-setting",
+                      "definition": {
+                        "value": "rolled back"
+                      }
+                    }
+                  ],
+                  "workflows": [
+                    {
+                      "document": {
+                        "dsl": "1.0.3",
+                        "namespace": "tests",
+                        "name": "must-rollback",
+                        "version": "1.0.0"
+                      },
+                      "do": [
+                        {
+                          "result": {
+                            "set": {
+                              "value": "must roll back"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {postInstall:$output} }"
+        }
+      }
+    },
+    {
+      "assert_postInstall": {
+        "set": "${ if (.postInstall.caught == true and .postInstall.failure.status == 422) then (.) else error(\"postInstall must fail with status 422\") end }"
+      }
+    },
+    {
+      "tables": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/database/tables",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {tables:$output} }"
+        }
+      }
+    },
+    {
+      "read_plugins": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "plugins"
+        },
+        "output": {
+          "as": "${ $input + {plugins:$output} }"
+        }
+      }
+    },
+    {
+      "read_workflows": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "workflows"
+        },
+        "output": {
+          "as": "${ $input + {workflows:$output} }"
+        }
+      }
+    },
+    {
+      "registry": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "content_types",
+          "filter": {
+            "uid": "rolled_back_settings"
+          }
+        },
+        "output": {
+          "as": "${ $input + {registry:$output} }"
+        }
+      }
+    },
+    {
+      "assertEverythingRolledBack": {
+        "set": "${ if ((.tables.tables|contains([\"rolled_back_settings\"])|not) and (.registry|length)==0 and (.plugins|map(select(.uid==\"tests.rollback-consumer\"))|length)==0 and (.workflows|map(select(.name|contains(\"must-rollback\")))|length)==0) then (.) else error(\"A post-install failure must roll back tables, registry rows, workflows, and the importing plugin\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-post-install-rollback"
+        }
+      }
+    }
+  ]
+}

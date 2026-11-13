@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ferrisflow.content-types",
   "name": "Content types",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Define content schemas, manage records, and create CRUD workflows.",
   "builtin": true,
   "database": {
@@ -877,6 +877,9 @@
         },
         "rowAction": {
           "workflow": "content-types-update"
+        },
+        "rowNavigation": {
+          "pathTemplate": "/content-types/{uid}"
         }
       }
     }

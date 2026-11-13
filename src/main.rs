@@ -11,7 +11,7 @@ mod pages;
 #[cfg(feature = "ui")]
 use pages::{
     AiSettings, Credentials, DataTables, EditPage, EditWorkflow, Executions, NewPage, NewWorkflow,
-    Overview, Pages, PluginDetailPage, PluginPagePage, PluginViewPage, Plugins, Variables,
+    ContentTypeViewer, NovelViewer, Overview, Pages, PluginDetailPage, PluginPagePage, PluginViewPage, Plugins, Variables,
     ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
@@ -96,6 +96,10 @@ enum Route {
     PluginPagePage { plugin_id: String, page_id: String },
     #[route("/plugins/:plugin_id/views/:view_id")]
     PluginViewPage { plugin_id: String, view_id: String },
+    #[route("/content-types/:id")]
+    ContentTypeViewer { id: String },
+    #[route("/novels/:id")]
+    NovelViewer { id: String },
     #[route("/plugins")]
     Plugins {},
     #[route("/plugins/:plugin_id")]

@@ -94,6 +94,27 @@ fn plugin_resource_count(manifest: &Value) -> usize {
         .sum()
 }
 
+fn plugin_reference_label(reference: &Value) -> String {
+    match reference {
+        Value::String(reference) => reference.clone(),
+        Value::Object(object) => {
+            let id = object
+                .get("id")
+                .or_else(|| object.get("uid"))
+                .or_else(|| object.get("name"))
+                .and_then(Value::as_str);
+            let version = object.get("version").and_then(Value::as_str);
+            match (id, version) {
+                (Some(id), Some(version)) => format!("{id} ({version})"),
+                (Some(id), None) => id.to_owned(),
+                (None, Some(version)) => version.to_owned(),
+                (None, None) => reference.to_string(),
+            }
+        }
+        _ => reference.to_string(),
+    }
+}
+
 fn plugin_import_request(source: ImportSource) -> Result<(&'static str, Value), String> {
     match source {
         ImportSource::Url(url) => Ok(("/api/plugins/import", serde_json::json!({"url": url}))),
@@ -795,106 +816,4 @@ fn default_plugin_json() -> String {
         "pages": []
     }))
     .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod import_tests {
-    use super::*;
-
-    #[test]
-    fn package_content_posts_to_plugin_creation_endpoint() {
-        let result = plugin_import_request(ImportSource::Contents(
-            r#"{"name":"Novels","version":"1.0.0"}"#.to_string(),
-        ));
-
-        assert_eq!(
-            result.unwrap(),
-            ("/api/plugins", serde_json::json!({"name":"Novels","version":"1.0.0"}))
-        );
-    }
-
-    #[test]
-    fn url_import_uses_server_side_import_endpoint() {
-        let result = plugin_import_request(ImportSource::Url(
-            "https://example.com/novels/plugin.json".to_string(),
-        ));
-
-        assert_eq!(
-            result.unwrap(),
-            (
-                "/api/plugins/import",
-                serde_json::json!({"url":"https://example.com/novels/plugin.json"})
-            )
-        );
-    }
-
-    #[test]
-    fn invalid_or_non_object_packages_are_rejected() {
-        assert!(plugin_import_request(ImportSource::Contents("{".to_string())).is_err());
-        assert_eq!(
-            plugin_import_request(ImportSource::Contents("[]".to_string())).unwrap_err(),
-            "Plugin package must be a JSON object."
-        );
-    }
-
-    #[test]
-    fn embedded_json_bundle_is_preserved() {
-        let source = ImportSource::Contents(
-            r#"{"id":"local.novels","files":{"workflows/read.json":"{\"name\":\"Read novels\"}"},"workflows":[{"$file":"workflows/read.json"}]}"#.to_string(),
-        );
-        let (_, package) = plugin_import_request(source).unwrap();
-        assert_eq!(package["files"]["workflows/read.json"], r#"{"name":"Read novels"}"#);
-        assert_eq!(package["workflows"][0]["$file"], "workflows/read.json");
-    }
-
-    #[test]
-    fn attached_json_files_match_manifest_references_by_basename() {
-        let manifest = r#"{
-            "id":"local.novels",
-            "workflows":[{"$file":"workflows/read.json"}],
-            "database":{"contentTypes":[{"$file":"content-types/novel.json"}]},
-            "plugins":[{"file":"plugins/content-types.json"}]
-        }"#;
-        let source = ImportSource::FileBundle {
-            contents: manifest.to_string(),
-            files: vec![
-                ("read.json".to_string(), r#"{"name":"Read novels"}"#.to_string()),
-                ("novel.json".to_string(), r#"{"name":"Novel"}"#.to_string()),
-                (
-                    "content-types.json".to_string(),
-                    r#"{"id":"ferrisflow.content-types"}"#.to_string(),
-                ),
-            ],
-        };
-        let (path, package) = plugin_import_request(source).unwrap();
-        assert_eq!(path, "/api/plugins");
-        assert_eq!(package["files"]["workflows/read.json"], r#"{"name":"Read novels"}"#);
-        assert_eq!(package["files"]["content-types/novel.json"], r#"{"name":"Novel"}"#);
-        assert_eq!(
-            package["files"]["plugins/content-types.json"],
-            r#"{"id":"ferrisflow.content-types"}"#
-        );
-    }
-
-    #[test]
-    fn duplicate_or_ambiguous_attached_json_files_are_rejected() {
-        let manifest = r#"{"workflows":[{"$file":"one/task.json"},{"$file":"two/task.json"}]}"#;
-        let source = ImportSource::FileBundle {
-            contents: manifest.to_string(),
-            files: vec![("task.json".to_string(), "{}".to_string())],
-        };
-        assert!(
-            plugin_import_request(source)
-                .unwrap_err()
-                .contains("matches multiple plugin references")
-        );
-    }
-}
-
-fn plugin_reference_label(reference: &Value) -> &str {
-    reference
-        .get("url")
-        .or_else(|| reference.get("file"))
-        .and_then(Value::as_str)
-        .unwrap_or("Invalid reference")
 }

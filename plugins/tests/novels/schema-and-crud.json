@@ -1,0 +1,181 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-schema-and-crud",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Validate integer chapter numbers, generated form/reader metadata, and registry provisioning.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "badNumbers": {
+        "for": {
+          "each": "number",
+          "in": "${ [1.5, 0, -1] }"
+        },
+        "do": [
+          {
+            "createInvalid": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/collections/local_novels_chapter",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "novel_source": "novel",
+                  "number": "${ $number }",
+                  "title": "Chapter",
+                  "source_url": "chapter",
+                  "body": "Text"
+                }
+              },
+              "output": {
+                "as": "${ $input + {created:$output} }"
+              }
+            }
+          },
+          {
+            "assertRejectedNumber": {
+              "set": "${ if (.created.success==false) then (.) else error(\"Invalid chapter numbers must be rejected\") end }"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "read_chapters": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertNoInvalidRecords": {
+        "set": "${ if ((.chapters|length)==0) then (.) else error(\"Invalid records must not reach the database\") end }"
+      }
+    },
+    {
+      "loadCreateWorkflow": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "workflows",
+          "filter": {
+            "name": "local.novels \u00b7 local_novels_chapter-create"
+          }
+        },
+        "output": {
+          "as": "${ $input + {createWorkflows:$output} }"
+        }
+      }
+    },
+    {
+      "loadReadWorkflow": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "workflows",
+          "filter": {
+            "name": "local.novels \u00b7 local_novels_chapter-read"
+          }
+        },
+        "output": {
+          "as": "${ $input + {readWorkflows:$output} }"
+        }
+      }
+    },
+    {
+      "assertForms": {
+        "set": "${ if ((.createWorkflows[0].definition_json|fromjson).document.metadata.ui.view.type==\"form\" and (.createWorkflows[0].definition_json|fromjson).document.metadata.ui.input_schema.properties.number.type==\"integer\" and (.readWorkflows[0].definition_json|fromjson).document.metadata.ui.output_view.bodyField==\"body\") then (.) else error(\"Generated CRUD must expose typed forms and chapter reading\") end }"
+      }
+    },
+    {
+      "createRegistryType": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/content-type-registry",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "uid": "reviews",
+            "display_name": "Reviews",
+            "schema": {
+              "fields": [
+                {
+                  "name": "title",
+                  "label": "Title",
+                  "type": "text",
+                  "required": true
+                }
+              ]
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {registry:$output} }"
+        }
+      }
+    },
+    {
+      "assertRegistry": {
+        "set": "${ if (.registry.success==true) then (.) else error(\"Direct registry creation must supply CRUD template parameters\") end }"
+      }
+    },
+    {
+      "createReview": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/collections/reviews",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "title": "Great"
+          }
+        },
+        "output": {
+          "as": "${ $input + {review:$output} }"
+        }
+      }
+    },
+    {
+      "assertReview": {
+        "set": "${ if (.review.success==true) then (.) else error(\"Directly provisioned collections must have working CRUD\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-schema-and-crud"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,222 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-legacy-storage",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Preserve list/read/update/delete compatibility with legacy JSON-backed records.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "legacySchema": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "create",
+          "table": "content_types",
+          "primaryKey": "uid",
+          "jsonFields": {
+            "schema": "schema_json"
+          },
+          "input": {
+            "uid": "articles",
+            "display_name": "Articles",
+            "schema": {
+              "fields": []
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {schema:$output} }"
+        }
+      }
+    },
+    {
+      "legacyRecord": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "create",
+          "table": "content_entries",
+          "jsonFields": {
+            "data": "data_json"
+          },
+          "input": {
+            "content_type_uid": "articles",
+            "data": {
+              "title": "Legacy article"
+            },
+            "published": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {entry:$output} }"
+        }
+      }
+    },
+    {
+      "list": {
+        "run": {
+          "workflow": {
+            "namespace": "ferrisflow_core",
+            "name": "content-records-list",
+            "version": "1.0.0",
+            "input": {
+              "request": {
+                "params": {
+                  "uid": "articles",
+                  "id": "1"
+                },
+                "body": {
+                  "data": {
+                    "title": "Updated article"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {list:$output} }"
+        }
+      }
+    },
+    {
+      "assertLegacyList": {
+        "set": "${ if (.list[0].data.title==\"Legacy article\") then (.) else error(\"Legacy JSON rows must remain readable\") end }"
+      }
+    },
+    {
+      "read": {
+        "run": {
+          "workflow": {
+            "namespace": "ferrisflow_core",
+            "name": "content-records-read",
+            "version": "1.0.0",
+            "input": {
+              "request": {
+                "params": {
+                  "uid": "articles",
+                  "id": "1"
+                },
+                "body": {
+                  "data": {
+                    "title": "Updated article"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {read:$output} }"
+        }
+      }
+    },
+    {
+      "assertLegacyRead": {
+        "set": "${ if (.read.data.title==\"Legacy article\") then (.) else error(\"Legacy record reads must remain compatible\") end }"
+      }
+    },
+    {
+      "update": {
+        "run": {
+          "workflow": {
+            "namespace": "ferrisflow_core",
+            "name": "content-records-update",
+            "version": "1.0.0",
+            "input": {
+              "request": {
+                "params": {
+                  "uid": "articles",
+                  "id": "1"
+                },
+                "body": {
+                  "data": {
+                    "title": "Updated article"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {update:$output} }"
+        }
+      }
+    },
+    {
+      "assert_update": {
+        "set": "${ if (.update.success==true) then (.) else error(\"Legacy update must succeed\") end }"
+      }
+    },
+    {
+      "delete": {
+        "run": {
+          "workflow": {
+            "namespace": "ferrisflow_core",
+            "name": "content-records-delete",
+            "version": "1.0.0",
+            "input": {
+              "request": {
+                "params": {
+                  "uid": "articles",
+                  "id": "1"
+                },
+                "body": {
+                  "data": {
+                    "title": "Updated article"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {delete:$output} }"
+        }
+      }
+    },
+    {
+      "assert_delete": {
+        "set": "${ if (.delete.success==true) then (.) else error(\"Legacy delete must succeed\") end }"
+      }
+    },
+    {
+      "read_entries": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "content_entries"
+        },
+        "output": {
+          "as": "${ $input + {entries:$output} }"
+        }
+      }
+    },
+    {
+      "assertLegacyDelete": {
+        "set": "${ if ((.entries|length)==0) then (.) else error(\"Legacy record deletion must persist\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-legacy-storage"
+        }
+      }
+    }
+  ]
+}
