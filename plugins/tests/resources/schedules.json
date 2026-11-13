@@ -1,0 +1,304 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-schedules",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Verify live schedule discovery, disable/re-enable, and removal against the real server.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "tickTable": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "ensure",
+          "table": "test_ticks",
+          "columns": [
+            {
+              "name": "id",
+              "type": "integer",
+              "primaryKey": true
+            },
+            {
+              "name": "value",
+              "type": "integer"
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {table:$output} }"
+        }
+      }
+    },
+    {
+      "importSchedule": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/plugins",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "schemaVersion": 1,
+            "id": "tests.ticks",
+            "name": "Scheduled ticks",
+            "version": "1.0.0",
+            "workflows": [
+              {
+                "document": {
+                  "dsl": "1.0.3",
+                  "namespace": "tests",
+                  "name": "tick",
+                  "version": "1.0.0",
+                  "metadata": {
+                    "ferrisflow": {
+                      "plugin": "tests.ticks"
+                    }
+                  }
+                },
+                "schedule": {
+                  "every": {
+                    "milliseconds": 100
+                  }
+                },
+                "do": [
+                  {
+                    "tick": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "create",
+                        "table": "test_ticks",
+                        "input": {
+                          "value": 1
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "output": {
+          "as": "${ $input + {installed:$output} }"
+        }
+      }
+    },
+    {
+      "discoverSchedule": {
+        "wait": {
+          "seconds": 7
+        }
+      }
+    },
+    {
+      "read_ticks": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {ticks:$output} }"
+        }
+      }
+    },
+    {
+      "assertStarted": {
+        "set": "${ if ((.ticks|length)>=2) then (.) else error(\"The server must discover schedules installed after startup\") end }"
+      }
+    },
+    {
+      "disable": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/tests.ticks/enabled",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "enabled": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {disabled:$output} }"
+        }
+      }
+    },
+    {
+      "discoverDisable": {
+        "wait": {
+          "seconds": 7
+        }
+      }
+    },
+    {
+      "read_before": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {before:$output} }"
+        }
+      }
+    },
+    {
+      "allowMoreTicks": {
+        "wait": {
+          "milliseconds": 300
+        }
+      }
+    },
+    {
+      "read_after": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {after:$output} }"
+        }
+      }
+    },
+    {
+      "assertStopped": {
+        "set": "${ if ((.before|length)==(.after|length)) then (.) else error(\"Disabling a plugin must cancel future scheduled runs\") end }"
+      }
+    },
+    {
+      "enable": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/tests.ticks/enabled",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "enabled": true
+          }
+        },
+        "output": {
+          "as": "${ $input + {enabled:$output} }"
+        }
+      }
+    },
+    {
+      "discoverEnable": {
+        "wait": {
+          "seconds": 7
+        }
+      }
+    },
+    {
+      "read_resumed": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {resumed:$output} }"
+        }
+      }
+    },
+    {
+      "assertResumed": {
+        "set": "${ if ((.resumed|length)>(.after|length)) then (.) else error(\"Re-enabling a plugin must restart its schedule\") end }"
+      }
+    },
+    {
+      "remove": {
+        "call": "http",
+        "with": {
+          "method": "DELETE",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/tests.ticks",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {removed:$output} }"
+        }
+      }
+    },
+    {
+      "discoverRemoval": {
+        "wait": {
+          "seconds": 7
+        }
+      }
+    },
+    {
+      "read_beforeRemoval": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {beforeRemoval:$output} }"
+        }
+      }
+    },
+    {
+      "allowRemovedTicks": {
+        "wait": {
+          "milliseconds": 300
+        }
+      }
+    },
+    {
+      "read_afterRemoval": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_ticks"
+        },
+        "output": {
+          "as": "${ $input + {afterRemoval:$output} }"
+        }
+      }
+    },
+    {
+      "assertRemoved": {
+        "set": "${ if ((.beforeRemoval|length)==(.afterRemoval|length)) then (.) else error(\"Removing a plugin must stop future scheduled runs\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-schedules"
+        }
+      }
+    }
+  ]
+}

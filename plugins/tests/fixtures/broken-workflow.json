@@ -1,0 +1,15 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "unrelated",
+    "version": "1.0.0"
+  },
+  "do": [
+    {
+      "broken": {
+        "set": "${ this is not a valid expression ( }"
+      }
+    }
+  ]
+}

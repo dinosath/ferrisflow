@@ -1,0 +1,356 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-import-refresh",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Persist imports, deduplicate records, resume refreshes, and preserve newer progress/preferences.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "seedResponses": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database.batch",
+          "operations": "${ .packages.httpResponses | map({operation:\"upsert\",table:\"test_http_responses\",primaryKey:\"url\",jsonFields:{response:\"response_json\"},input:.}) }"
+        },
+        "output": {
+          "as": "${ $input + {seed:$output} }"
+        }
+      }
+    },
+    {
+      "repeatImport": {
+        "for": {
+          "each": "attempt",
+          "in": "${ [1, 2] }"
+        },
+        "do": [
+          {
+            "import": {
+              "run": {
+                "workflow": {
+                  "namespace": "local",
+                  "name": "crawl-brightnovels",
+                  "version": "0.2.0",
+                  "input": {
+                    "novel_url": "https://brightnovels.com/series/dune/",
+                    "chapter_from": 1,
+                    "chapter_to": 3,
+                    "auto_update": true
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "output": {
+          "as": "${ $input + {imports:$output} }"
+        }
+      }
+    },
+    {
+      "read_novels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "read_chapters": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertImport": {
+        "set": "${ if ((.novels|length)==1 and (.chapters|length)==2 and .novels[0].last_downloaded_chapter==2 and .novels[0].auto_update==true and .novels[0].source_site==\"brightnovels.com\") then (.) else error(\"Repeated imports must update existing records and skip premium chapters\") end }"
+      }
+    },
+    {
+      "assertChapter": {
+        "set": "${ if ((.chapters | map(select(.number==1)) | first).body==\"<p>Chapter 1 & text</p>\" and .chapters[0].novel_source==.novels[0].source) then (.) else error(\"Chapter HTML must decode and link to the novel\") end }"
+      }
+    },
+    {
+      "assertTimestamps": {
+        "set": "${ . }",
+        "input": {
+          "schema": {
+            "format": "json",
+            "document": {
+              "type": "object",
+              "properties": {
+                "novels": {
+                  "type": "array",
+                  "items": {
+                    "properties": {
+                      "last_checked_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
+                },
+                "chapters": {
+                  "type": "array",
+                  "items": {
+                    "properties": {
+                      "downloaded_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "setHttpResponse": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "upsert",
+          "table": "test_http_responses",
+          "primaryKey": "url",
+          "jsonFields": {
+            "response": "response_json"
+          },
+          "input": {
+            "url": "https://brightnovels.com/series/dune/chapters",
+            "response": {
+              "chapters": [
+                {
+                  "number": 4,
+                  "slug": "chapter-4",
+                  "name": "Chapter 4",
+                  "is_premium": false
+                },
+                {
+                  "number": 3,
+                  "slug": "chapter-3",
+                  "name": "Chapter 3",
+                  "is_premium": true
+                },
+                {
+                  "number": 2,
+                  "slug": "chapter-2",
+                  "name": "Chapter 2",
+                  "is_premium": false
+                },
+                {
+                  "number": 1,
+                  "slug": "chapter-1",
+                  "name": "Chapter 1",
+                  "is_premium": false
+                }
+              ]
+            },
+            "fail": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {fixture:$output} }"
+        }
+      }
+    },
+    {
+      "read_requests": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_http_requests"
+        },
+        "output": {
+          "as": "${ $input + {requests:$output} }"
+        }
+      }
+    },
+    {
+      "clearRequests": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database.batch",
+          "operations": "${ .requests | map({operation:\"delete\",table:\"test_http_requests\",key:.id}) }"
+        },
+        "output": {
+          "as": "${ $input + {cleared:$output} }"
+        }
+      }
+    },
+    {
+      "refresh": {
+        "run": {
+          "workflow": {
+            "namespace": "local",
+            "name": "refresh-brightnovels",
+            "version": "0.2.0",
+            "input": {
+              "novel_url": "https://brightnovels.com/series/dune",
+              "last_downloaded_chapter": 999
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {refresh:$output} }"
+        }
+      }
+    },
+    {
+      "read_requests_2": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_http_requests"
+        },
+        "output": {
+          "as": "${ $input + {requests:$output} }"
+        }
+      }
+    },
+    {
+      "read_novels_2": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "read_chapters_2": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertRefresh": {
+        "set": "${ if ((.chapters|length)==3 and .novels[0].last_downloaded_chapter==4 and (.requests|map(select(.endpoint|endswith(\"/chapter-4\")))|length)==1 and (.requests|map(select((.endpoint|endswith(\"/chapter-1\")) or (.endpoint|endswith(\"/chapter-2\")) or (.endpoint|endswith(\"/chapter-3\"))))|length)==0) then (.) else error(\"Refresh must use saved progress and only fetch new non-premium chapters\") end }"
+      }
+    },
+    {
+      "reimportOlderChapters": {
+        "run": {
+          "workflow": {
+            "namespace": "local",
+            "name": "crawl-brightnovels",
+            "version": "0.2.0",
+            "input": {
+              "novel_url": "https://brightnovels.com/series/dune",
+              "chapter_from": 1,
+              "chapter_to": 2
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {olderImport:$output} }"
+        }
+      }
+    },
+    {
+      "optOut": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "update",
+          "table": "local_novels_novel",
+          "key": "${ .novels[0].id }",
+          "input": {
+            "auto_update": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {optOut:$output} }"
+        }
+      }
+    },
+    {
+      "saveOldInFlightCrawl": {
+        "run": {
+          "workflow": {
+            "namespace": "local",
+            "name": "save-brightnovels",
+            "version": "0.2.0",
+            "input": {
+              "title": "Dune",
+              "source": "https://brightnovels.com/series/dune",
+              "last_downloaded_chapter": 2,
+              "auto_update": true,
+              "auto_update_explicit": false,
+              "chapters": []
+            }
+          }
+        },
+        "output": {
+          "as": "${ $input + {oldSave:$output} }"
+        }
+      }
+    },
+    {
+      "read_novels_3": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "assertMonotonicProgress": {
+        "set": "${ if (.novels[0].last_downloaded_chapter==4 and .novels[0].auto_update==false) then (.) else error(\"Old crawls must not regress progress or undo a later opt-out\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-import-refresh"
+        }
+      }
+    }
+  ]
+}

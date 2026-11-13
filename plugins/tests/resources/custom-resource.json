@@ -1,0 +1,243 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-custom-resource",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Provision arbitrary resources through workflows and reject disabled providers.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "installProvider": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/plugins",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "schemaVersion": 1,
+            "id": "tests.settings",
+            "name": "Settings provider",
+            "version": "1.0.0",
+            "resourceTypes": [
+              {
+                "name": "test-setting",
+                "create": "apply-setting"
+              }
+            ],
+            "workflows": [
+              {
+                "document": {
+                  "dsl": "1.0.3",
+                  "namespace": "tests",
+                  "name": "apply-setting",
+                  "version": "1.0.0"
+                },
+                "do": [
+                  {
+                    "table": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "ensure",
+                        "table": "test_settings",
+                        "columns": [
+                          {
+                            "name": "id",
+                            "type": "integer",
+                            "primaryKey": true
+                          },
+                          {
+                            "name": "value",
+                            "type": "string"
+                          }
+                        ],
+                        "input": "${ . }",
+                        "returnInput": true
+                      }
+                    }
+                  },
+                  {
+                    "record": {
+                      "call": "ferrisflow.primitive",
+                      "with": {
+                        "primitive": "database",
+                        "operation": "create",
+                        "table": "test_settings",
+                        "input": "${ .definition }"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "output": {
+          "as": "${ $input + {provider:$output} }"
+        }
+      }
+    },
+    {
+      "installConsumer": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/plugins",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "schemaVersion": 1,
+            "id": "tests.settings-consumer",
+            "name": "Settings consumer",
+            "version": "1.0.0",
+            "dependencies": [
+              {
+                "id": "tests.settings",
+                "version": "^1.0"
+              }
+            ],
+            "resources": [
+              {
+                "type": "test-setting",
+                "definition": {
+                  "value": "configured"
+                }
+              }
+            ]
+          }
+        },
+        "output": {
+          "as": "${ $input + {consumer:$output} }"
+        }
+      }
+    },
+    {
+      "read_settings": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_settings"
+        },
+        "output": {
+          "as": "${ $input + {settings:$output} }"
+        }
+      }
+    },
+    {
+      "assertCustomResource": {
+        "set": "${ if (.settings[0].value==\"configured\") then (.) else error(\"Providers must handle arbitrary resource types\") end }"
+      }
+    },
+    {
+      "disableProvider": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/tests.settings/enabled",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "enabled": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {disabled:$output} }"
+        }
+      }
+    },
+    {
+      "disabledDependency": {
+        "try": [
+          {
+            "attempt": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/plugins",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "schemaVersion": 1,
+                  "id": "tests.disabled-consumer",
+                  "name": "Settings consumer",
+                  "version": "1.0.0",
+                  "dependencies": [
+                    {
+                      "id": "tests.settings",
+                      "version": "^1.0"
+                    }
+                  ],
+                  "resources": [
+                    {
+                      "type": "test-setting",
+                      "definition": {
+                        "value": "configured"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {disabledDependency:$output} }"
+        }
+      }
+    },
+    {
+      "assert_disabledDependency": {
+        "set": "${ if (.disabledDependency.caught == true and .disabledDependency.failure.status == 422) then (.) else error(\"disabledDependency must fail with status 422\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-custom-resource"
+        }
+      }
+    }
+  ]
+}

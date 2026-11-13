@@ -1,0 +1,151 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-upgrade",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Apply uniqueness to an existing table without losing its records.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "legacyManifest": {
+        "set": "${ . + {legacy:(.packages.novels + {resources:(.packages.novels.resources|map(. + {definition:(.definition + {schema:(.definition.schema + {fields:(.definition.schema.fields|map(. + {unique:false}))})})}))})} }"
+      }
+    },
+    {
+      "installPreviousSchema": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/plugins",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "${ .legacy }"
+        },
+        "output": {
+          "as": "${ $input + {installed:$output} }"
+        }
+      }
+    },
+    {
+      "existingRecord": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "create",
+          "table": "local_novels_novel",
+          "input": {
+            "title": "Existing",
+            "source": "https://brightnovels.com/series/dune"
+          }
+        },
+        "output": {
+          "as": "${ $input + {record:$output} }"
+        }
+      }
+    },
+    {
+      "upgradePackage": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/local.novels",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "${ .packages.novels }"
+        },
+        "output": {
+          "as": "${ $input + {upgraded:$output} }"
+        }
+      }
+    },
+    {
+      "read_novels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "assertUpgradePreservesData": {
+        "set": "${ if ((.novels|length)==1 and .novels[0].title==\"Existing\") then (.) else error(\"Package upgrades must preserve existing records\") end }"
+      }
+    },
+    {
+      "duplicateSource": {
+        "try": [
+          {
+            "attempt": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "create",
+                "table": "local_novels_novel",
+                "input": {
+                  "title": "Duplicate",
+                  "source": "https://brightnovels.com/series/dune"
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {duplicateSource:$output} }"
+        }
+      }
+    },
+    {
+      "assert_duplicateSource": {
+        "set": "${ if (.duplicateSource.caught == true and .duplicateSource.failure.status == 400) then (.) else error(\"duplicateSource must fail with status 400\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-upgrade"
+        }
+      }
+    }
+  ]
+}

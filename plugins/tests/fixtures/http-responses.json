@@ -1,0 +1,53 @@
+[
+  {
+    "url": "https://brightnovels.com/",
+    "response": "<div data-page=\"{}\"></div>",
+    "fail": false
+  },
+  {
+    "url": "https://brightnovels.com/series/dune",
+    "response": "<div data-page=\"{&quot;props&quot;:{&quot;series&quot;:{&quot;title&quot;:&quot;Dune&quot;,&quot;user&quot;:{&quot;name&quot;:&quot;Frank Herbert&quot;},&quot;description&quot;:&quot;Desert planet&quot;,&quot;cover&quot;:{&quot;path&quot;:&quot;dune.png&quot;}}}}\"></div>",
+    "fail": false
+  },
+  {
+    "url": "https://brightnovels.com/series/dune/chapters",
+    "response": {
+      "chapters": [
+        {
+          "number": 3,
+          "slug": "chapter-3",
+          "name": "Chapter 3",
+          "is_premium": true
+        },
+        {
+          "number": 2,
+          "slug": "chapter-2",
+          "name": "Chapter 2",
+          "is_premium": false
+        },
+        {
+          "number": 1,
+          "slug": "chapter-1",
+          "name": "Chapter 1",
+          "is_premium": false
+        }
+      ]
+    },
+    "fail": false
+  },
+  {
+    "url": "https://brightnovels.com/series/dune/chapter-1",
+    "response": "<div data-page=\"{&quot;props&quot;:{&quot;chapter&quot;:{&quot;content&quot;:&quot;&lt;p&gt;Chapter 1 &amp; text&lt;/p&gt;&quot;}}}\"></div>",
+    "fail": false
+  },
+  {
+    "url": "https://brightnovels.com/series/dune/chapter-2",
+    "response": "<div data-page=\"{&quot;props&quot;:{&quot;chapter&quot;:{&quot;content&quot;:&quot;&lt;p&gt;Chapter 2 &amp; text&lt;/p&gt;&quot;}}}\"></div>",
+    "fail": false
+  },
+  {
+    "url": "https://brightnovels.com/series/dune/chapter-4",
+    "response": "<div data-page=\"{&quot;props&quot;:{&quot;chapter&quot;:{&quot;content&quot;:&quot;&lt;p&gt;Chapter 4 &amp; text&lt;/p&gt;&quot;}}}\"></div>",
+    "fail": false
+  }
+]

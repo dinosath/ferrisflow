@@ -47,6 +47,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
+      - name: Run plugin workflow tests
+        run: python3 scripts/test-workflows.py
+
       - name: Check server and compatibility alias feature sets
         run: cargo check --workspace --no-default-features --features api-server
 

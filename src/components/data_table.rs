@@ -7,10 +7,6 @@ struct TableState {
     selected: Vec<String>,
     visible_columns: Vec<bool>,
     view_open: bool,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-struct PaginationState {
     page: usize,
     page_size: usize,
 }
@@ -24,28 +20,32 @@ pub fn DataTable(
         selected: Vec::new(),
         visible_columns: vec![true; columns.len()],
         view_open: false,
-    });
-    let mut pagination = use_signal(|| PaginationState {
         page: 1,
         page_size: 10,
     });
     use_context_provider(|| state);
-    use_context_provider(|| pagination);
 
     let count = row_ids.len();
-    let page_count = count.div_ceil(pagination().page_size).max(1);
+    let page_count = count.div_ceil(state().page_size.max(1)).max(1);
     use_effect(move || {
-        let mut current = pagination();
+        let mut current = state();
+        let previous = current.clone();
+        current.page_size = current.page_size.max(1);
         let available_pages = count.div_ceil(current.page_size).max(1);
         if current.page > available_pages {
             current.page = available_pages;
-            pagination.set(current);
+        }
+        if current != previous {
+            state.set(current);
         }
     });
-    let page = pagination().page.min(page_count);
-    let start = (page - 1) * pagination().page_size;
+    let page = state().page.min(page_count);
+    let page_size = state().page_size.max(1);
+    let start = (page - 1) * page_size;
     let visible_ids: Vec<String> =
-        row_ids.iter().skip(start).take(pagination().page_size).cloned().collect();
+        row_ids.iter().skip(start).take(page_size).cloned().collect();
+    let visible_start = if visible_ids.is_empty() { 0 } else { start + 1 };
+    let visible_end = start + visible_ids.len();
     let selected_count = visible_ids.iter().filter(|id| state().selected.contains(id)).count();
     let all_visible_selected = !visible_ids.is_empty() && selected_count == visible_ids.len();
     let page_numbers: Vec<usize> = if page_count <= 5 {
@@ -154,24 +154,25 @@ pub fn DataTable(
                 div { class: "shared-table-page-size",
                     select {
                         aria_label: "Rows per page",
-                        value: "{pagination().page_size}",
+                        value: "{state().page_size}",
                         onchange: move |event| {
-                            let mut current = pagination();
-                            current.page_size = event.value().parse().unwrap_or(10);
+                            let mut current = state();
+                            current.page_size = event.value().parse::<usize>().unwrap_or(10).max(1);
                             current.page = 1;
-                            pagination.set(current);
+                            state.set(current);
                         },
                         option { value: "10", "10" }
                         option { value: "20", "20" }
                         option { value: "50", "50" }
                     }
                     span { "Rows per page" }
+                    span { class: "shared-table-row-range", "Showing {visible_start}–{visible_end} of {count}" }
                 }
                 div { class: "shared-table-pagination",
                     span { class: "shared-table-page-label", "Page {page} of {page_count}" }
                     div { class: "shared-table-page-buttons",
-                        button { r#type: "button", title: "Go to first page", aria_label: "Go to first page", disabled: page <= 1, onclick: move |_| { let mut current = pagination(); current.page = 1; pagination.set(current); }, Icon { name: "chevrons-left" } }
-                        button { r#type: "button", title: "Go to previous page", aria_label: "Go to previous page", disabled: page <= 1, onclick: move |_| { let mut current = pagination(); current.page = current.page.saturating_sub(1).max(1); pagination.set(current); }, Icon { name: "chevron-left" } }
+                        button { r#type: "button", title: "Go to first page", aria_label: "Go to first page", disabled: page <= 1, onclick: move |_| { let mut current = state(); current.page = 1; state.set(current); }, Icon { name: "chevrons-left" } }
+                        button { r#type: "button", title: "Go to previous page", aria_label: "Go to previous page", disabled: page <= 1, onclick: move |_| { let mut current = state(); current.page = current.page.saturating_sub(1).max(1); state.set(current); }, Icon { name: "chevron-left" } }
                         for target in page_numbers.iter() {
                             {
                                 let target = *target;
@@ -179,17 +180,17 @@ pub fn DataTable(
                                     class: if target == page { "shared-table-current-page" } else { "shared-table-page-number" },
                                     r#type: "button",
                                     aria_label: "Go to page {target}",
-                                    onclick: move |_| { let mut current = pagination(); current.page = target; pagination.set(current); },
+                                    onclick: move |_| { let mut current = state(); current.page = target; state.set(current); },
                                     "{target}"
                                 } }
                             }
                         }
                         if show_ellipsis { span { class: "shared-table-ellipsis", "…" } }
                         if show_ellipsis {
-                            button { class: "shared-table-page-number", r#type: "button", aria_label: "Go to page {page_count}", onclick: move |_| { let mut current = pagination(); current.page = page_count; pagination.set(current); }, "{page_count}" }
+                            button { class: "shared-table-page-number", r#type: "button", aria_label: "Go to page {page_count}", onclick: move |_| { let mut current = state(); current.page = page_count; state.set(current); }, "{page_count}" }
                         }
-                        button { r#type: "button", title: "Go to next page", aria_label: "Go to next page", disabled: page >= page_count, onclick: move |_| { let mut current = pagination(); current.page = (current.page + 1).min(page_count); pagination.set(current); }, Icon { name: "chevron-right" } }
-                        button { r#type: "button", title: "Go to last page", aria_label: "Go to last page", disabled: page >= page_count, onclick: move |_| { let mut current = pagination(); current.page = page_count; pagination.set(current); }, Icon { name: "chevrons-right" } }
+                        button { r#type: "button", title: "Go to next page", aria_label: "Go to next page", disabled: page >= page_count, onclick: move |_| { let mut current = state(); current.page = (current.page + 1).min(page_count); state.set(current); }, Icon { name: "chevron-right" } }
+                        button { r#type: "button", title: "Go to last page", aria_label: "Go to last page", disabled: page >= page_count, onclick: move |_| { let mut current = state(); current.page = page_count; state.set(current); }, Icon { name: "chevrons-right" } }
                     }
                 }
             }
@@ -199,25 +200,30 @@ pub fn DataTable(
 }
 
 #[component]
-pub fn DataTableRow(id: String, index: usize, children: Element) -> Element {
+pub fn DataTableRow(
+    id: String, index: usize, #[props(default)] clickable: bool,
+    #[props(default)] on_click: Option<EventHandler<MouseEvent>>, children: Element,
+) -> Element {
     let mut state = use_context::<Signal<TableState>>();
-    let pagination = use_context::<Signal<PaginationState>>();
     let current = state();
     let selected = current.selected.contains(&id);
-    let current_page = pagination();
-    let page = current_page.page.max(1);
-    let visible = index >= (page - 1) * current_page.page_size && index < page * current_page.page_size;
+    let page = current.page.max(1);
+    let page_size = current.page_size.max(1);
+    let visible = index >= (page - 1) * page_size && index < page * page_size;
     let row_id = id.clone();
 
     rsx! {
+        if visible {
         tr {
-            class: if selected { "shared-table-row selected" } else { "shared-table-row" },
-            style: if visible { "" } else { "display: none" },
+            class: if clickable { "shared-table-row shared-table-row-clickable" } else if selected { "shared-table-row selected" } else { "shared-table-row" },
             key: "{id}",
+            onclick: move |event| { if let Some(on_click) = on_click { on_click.call(event); } },
+            tabindex: if clickable { "0" } else { "-1" },
             td { class: "shared-table-select-cell",
                 input {
                     r#type: "checkbox",
                     aria_label: "Select row",
+                    onclick: move |event| event.stop_propagation(),
                     checked: selected,
                     onchange: move |event| {
                         let mut current = state();
@@ -236,6 +242,7 @@ pub fn DataTableRow(id: String, index: usize, children: Element) -> Element {
             td { class: "shared-table-action-cell",
                 button { r#type: "button", title: "More actions", aria_label: "More actions", Icon { name: "more" } }
             }
+        }
         }
     }
 }

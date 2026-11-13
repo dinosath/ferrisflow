@@ -1,5 +1,5 @@
 image:
-  repository: ferris-workflow
+  repository: ferrisflow
   tag: 0.1.0
   pullPolicy: IfNotPresent
 
