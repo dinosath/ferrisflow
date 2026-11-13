@@ -1,0 +1,158 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-auto-refresh",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Select opted-in novels and isolate per-novel failures.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "seedResponses": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database.batch",
+          "operations": "${ .packages.httpResponses | map({operation:\"upsert\",table:\"test_http_responses\",primaryKey:\"url\",jsonFields:{response:\"response_json\"},input:.}) }"
+        },
+        "output": {
+          "as": "${ $input + {seed:$output} }"
+        }
+      }
+    },
+    {
+      "setHttpResponse": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "upsert",
+          "table": "test_http_responses",
+          "primaryKey": "url",
+          "jsonFields": {
+            "response": "response_json"
+          },
+          "input": {
+            "url": "https://brightnovels.com/series/dune/chapters",
+            "response": {
+              "chapters": [
+                {
+                  "number": 1,
+                  "slug": "chapter-1",
+                  "name": "Chapter 1",
+                  "is_premium": false
+                }
+              ]
+            },
+            "fail": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {fixture:$output} }"
+        }
+      }
+    },
+    {
+      "seedNovels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database.batch",
+          "operations": [
+            {
+              "operation": "create",
+              "table": "local_novels_novel",
+              "input": {
+                "title": "Broken",
+                "source": "bad-url",
+                "auto_update": true
+              }
+            },
+            {
+              "operation": "create",
+              "table": "local_novels_novel",
+              "input": {
+                "title": "Dune",
+                "source": "https://brightnovels.com/series/dune",
+                "auto_update": true
+              }
+            },
+            {
+              "operation": "create",
+              "table": "local_novels_novel",
+              "input": {
+                "title": "Disabled",
+                "source": "https://brightnovels.com/series/disabled",
+                "auto_update": false
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {seeded:$output} }"
+        }
+      }
+    },
+    {
+      "refreshOptedIn": {
+        "run": {
+          "workflow": {
+            "namespace": "local",
+            "name": "refresh-auto-novels",
+            "version": "0.2.0",
+            "input": null
+          }
+        },
+        "output": {
+          "as": "${ $input + {autoRefresh:$output} }"
+        }
+      }
+    },
+    {
+      "read_requests": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_http_requests"
+        },
+        "output": {
+          "as": "${ $input + {requests:$output} }"
+        }
+      }
+    },
+    {
+      "read_chapters": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertSelection": {
+        "set": "${ if ((.chapters|length)==1 and (.requests|map(select(.endpoint|contains(\"/disabled\")))|length)==0 and (.requests|map(select(.endpoint|endswith(\"/dune/chapter-1\")))|length)==1) then (.) else error(\"Auto refresh must continue after one novel fails and skip opted-out novels: \" + (.autoRefresh|tostring) + \" requests=\" + (.requests|tostring) + \" chapters=\" + (.chapters|tostring)) end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-auto-refresh"
+        }
+      }
+    }
+  ]
+}

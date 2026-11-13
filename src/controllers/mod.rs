@@ -1,8 +1,6 @@
 pub mod ai;
 pub mod content_views;
 mod health;
-#[cfg(test)]
-mod novels_tests;
 pub(crate) mod plugin_resources;
 pub mod plugins;
 pub(crate) mod primitives;

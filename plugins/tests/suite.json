@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "functions": {
+    "http": {
+      "namespace": "tests",
+      "name": "http-fixture",
+      "version": "1.0.0"
+    }
+  },
+  "plugins": [
+    "fixtures/plugin.json",
+    "../local.novels.json"
+  ],
+  "inputs": {
+    "novels": "../local.novels.json",
+    "example": "../example.novels.json",
+    "httpResponses": "fixtures/http-responses.json",
+    "brokenWorkflow": "fixtures/broken-workflow.json"
+  },
+  "cases": [
+    {
+      "workflow": "novels/atomic-rollback.json"
+    },
+    {
+      "workflow": "novels/auto-refresh.json"
+    },
+    {
+      "workflow": "novels/import-refresh.json"
+    },
+    {
+      "workflow": "novels/invalid-input-and-download.json"
+    },
+    {
+      "workflow": "novels/lifecycle.json"
+    },
+    {
+      "workflow": "novels/schema-and-crud.json"
+    },
+    {
+      "workflow": "novels/upgrade.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    },
+    {
+      "workflow": "resources/custom-resource.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    },
+    {
+      "workflow": "resources/dependencies-and-validation.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    },
+    {
+      "workflow": "resources/example-crud.json",
+      "plugins": [
+        "fixtures/plugin.json",
+        "../example.novels.json"
+      ]
+    },
+    {
+      "workflow": "resources/legacy-storage.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    },
+    {
+      "workflow": "resources/post-install-rollback.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    },
+    {
+      "workflow": "resources/schedules.json",
+      "plugins": [
+        "fixtures/plugin.json"
+      ]
+    }
+  ]
+}

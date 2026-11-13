@@ -1,0 +1,284 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-dependencies-and-validation",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Reject missing/incompatible dependencies, unknown resource types, and unsafe identifiers.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "missingDependency": {
+        "try": [
+          {
+            "attempt": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/plugins",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "schemaVersion": 1,
+                  "id": "tests.missing",
+                  "name": "Missing dependency",
+                  "version": "1.0.0",
+                  "dependencies": [
+                    {
+                      "id": "tests.absent",
+                      "version": "^1.0.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {missingDependency:$output} }"
+        }
+      }
+    },
+    {
+      "assert_missingDependency": {
+        "set": "${ if (.missingDependency.caught == true and .missingDependency.failure.status == 422) then (.) else error(\"missingDependency must fail with status 422\") end }"
+      }
+    },
+    {
+      "incompatibleDependency": {
+        "try": [
+          {
+            "attempt": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/plugins",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "schemaVersion": 1,
+                  "id": "tests.incompatible",
+                  "name": "Incompatible dependency",
+                  "version": "1.0.0",
+                  "dependencies": [
+                    {
+                      "id": "ferrisflow.content-types",
+                      "version": "^2.0.0"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {incompatibleDependency:$output} }"
+        }
+      }
+    },
+    {
+      "assert_incompatibleDependency": {
+        "set": "${ if (.incompatibleDependency.caught == true and .incompatibleDependency.failure.status == 422) then (.) else error(\"incompatibleDependency must fail with status 422\") end }"
+      }
+    },
+    {
+      "unknownResource": {
+        "try": [
+          {
+            "attempt": {
+              "call": "http",
+              "with": {
+                "method": "POST",
+                "endpoint": "@TEST_BASE_URL@/api/plugins",
+                "output": "content",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "schemaVersion": 1,
+                  "id": "tests.unknown",
+                  "name": "Unknown resource",
+                  "version": "1.0.0",
+                  "resources": [
+                    {
+                      "type": "unknown",
+                      "definition": {}
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {unknownResource:$output} }"
+        }
+      }
+    },
+    {
+      "assert_unknownResource": {
+        "set": "${ if (.unknownResource.caught == true and .unknownResource.failure.status == 422) then (.) else error(\"unknownResource must fail with status 422\") end }"
+      }
+    },
+    {
+      "unsafeIdentifier": {
+        "try": [
+          {
+            "attempt": {
+              "call": "ferrisflow.primitive",
+              "with": {
+                "primitive": "database",
+                "operation": "list",
+                "table": "novels; DROP TABLE plugins"
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {unsafeIdentifier:$output} }"
+        }
+      }
+    },
+    {
+      "assert_unsafeIdentifier": {
+        "set": "${ if (.unsafeIdentifier.caught == true and .unsafeIdentifier.failure.status == 400) then (.) else error(\"unsafeIdentifier must fail with status 400\") end }"
+      }
+    },
+    {
+      "read_plugins": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "plugins"
+        },
+        "output": {
+          "as": "${ $input + {plugins:$output} }"
+        }
+      }
+    },
+    {
+      "assertRejectedImportsAbsent": {
+        "set": "${ if ((.plugins|map(select(.uid==\"tests.missing\" or .uid==\"tests.incompatible\" or .uid==\"tests.unknown\"))|length)==0) then (.) else error(\"Rejected imports must leave no plugin rows\") end }"
+      }
+    },
+    {
+      "health": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/health",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {health:$output} }"
+        }
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-dependencies-and-validation"
+        }
+      }
+    }
+  ]
+}

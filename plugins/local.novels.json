@@ -29,7 +29,7 @@
     }
   ],
   "schemaVersion": 1,
-  "version": "0.9.30",
+  "version": "0.9.33",
   "views": [
     {
       "id": "local_novels_novel-table",
@@ -134,7 +134,10 @@
               "id": "id"
             }
           }
-        ]
+        ],
+        "rowNavigation": {
+          "pathTemplate": "/novels/{id}"
+        }
       }
     },
     {
@@ -573,6 +576,16 @@
                     "output": "content"
                   }
                 }
+              },
+              {
+                "paceBrightNovels": {
+                  "wait": {
+                    "seconds": 1
+                  },
+                  "output": {
+                    "as": "$input"
+                  }
+                }
               }
             ],
             "for": {
@@ -604,7 +617,7 @@
         "dsl": "1.0.3",
         "name": "refresh-brightnovels",
         "namespace": "local",
-        "version": "0.2.0",
+        "version": "0.2.1",
         "metadata": {
           "ferrisflow": {
             "plugin": "local.novels",
@@ -6415,7 +6428,7 @@
       },
       "schedule": {
         "every": {
-          "minutes": 5
+          "minutes": 30
         }
       },
       "do": [

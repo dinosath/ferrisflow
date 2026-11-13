@@ -1,0 +1,216 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-invalid-input-and-download",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Reject invalid URLs/ranges and roll back a failed chapter download.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "seedResponses": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database.batch",
+          "operations": "${ .packages.httpResponses | map({operation:\"upsert\",table:\"test_http_responses\",primaryKey:\"url\",jsonFields:{response:\"response_json\"},input:.}) }"
+        },
+        "output": {
+          "as": "${ $input + {seed:$output} }"
+        }
+      }
+    },
+    {
+      "invalidInputs": {
+        "for": {
+          "each": "invalid",
+          "in": "${ [{\"novel_url\": \"https://other.example/series/dune\"}, {\"novel_url\": \"https://brightnovels.com/series/dune\", \"chapter_from\": 4, \"chapter_to\": 1}, {\"novel_url\": \"https://brightnovels.com/series/dune\", \"chapter_from\": 1.5}] }"
+        },
+        "do": [
+          {
+            "invalidInput": {
+              "try": [
+                {
+                  "attempt": {
+                    "run": {
+                      "workflow": {
+                        "namespace": "local",
+                        "name": "crawl-brightnovels",
+                        "version": "0.2.0",
+                        "input": "${ $invalid }"
+                      }
+                    }
+                  }
+                },
+                {
+                  "unexpectedSuccess": {
+                    "set": {
+                      "caught": false
+                    }
+                  }
+                }
+              ],
+              "catch": {
+                "as": "failure",
+                "do": [
+                  {
+                    "expectedFailure": {
+                      "set": {
+                        "caught": true,
+                        "failure": "${ $failure }"
+                      }
+                    }
+                  }
+                ]
+              },
+              "output": {
+                "as": "${ $input + {invalidInput:$output} }"
+              }
+            }
+          },
+          {
+            "assert_invalidInput": {
+              "set": "${ if (.invalidInput.caught == true and .invalidInput.failure.status == 400) then (.) else error(\"invalidInput must fail with status 400\") end }"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "read_requests": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "test_http_requests"
+        },
+        "output": {
+          "as": "${ $input + {requests:$output} }"
+        }
+      }
+    },
+    {
+      "assertNoNetwork": {
+        "set": "${ if ((.requests|length)==0) then (.) else error(\"Invalid input must fail before network access\") end }"
+      }
+    },
+    {
+      "setHttpResponse": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "upsert",
+          "table": "test_http_responses",
+          "primaryKey": "url",
+          "jsonFields": {
+            "response": "response_json"
+          },
+          "input": {
+            "url": "https://brightnovels.com/series/dune/chapter-2",
+            "response": null,
+            "fail": true
+          }
+        },
+        "output": {
+          "as": "${ $input + {fixture:$output} }"
+        }
+      }
+    },
+    {
+      "failedDownload": {
+        "try": [
+          {
+            "attempt": {
+              "run": {
+                "workflow": {
+                  "namespace": "local",
+                  "name": "crawl-brightnovels",
+                  "version": "0.2.0",
+                  "input": {
+                    "novel_url": "https://brightnovels.com/series/dune"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {failedDownload:$output} }"
+        }
+      }
+    },
+    {
+      "assert_failedDownload": {
+        "set": "${ if (.failedDownload.caught == true) then (.) else error(\"failedDownload must fail\") end }"
+      }
+    },
+    {
+      "read_novels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "read_chapters": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertNoPartialRecords": {
+        "set": "${ if ((.novels|length)==0 and (.chapters|length)==0) then (.) else error(\"A failed download must not save any partial records\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-invalid-input-and-download"
+        }
+      }
+    }
+  ]
+}
