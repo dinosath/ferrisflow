@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "tests.fixtures",
+  "name": "Workflow test fixtures",
+  "version": "1.0.0",
+  "workflows": [
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "tests",
+        "name": "setup-fixtures",
+        "version": "1.0.0"
+      },
+      "do": [
+        {
+          "responses": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "ensure",
+              "table": "test_http_responses",
+              "columns": [
+                {
+                  "name": "url",
+                  "type": "string",
+                  "primaryKey": true
+                },
+                {
+                  "name": "response_json",
+                  "type": "string"
+                },
+                {
+                  "name": "fail",
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "requests": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "ensure",
+              "table": "test_http_requests",
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "integer",
+                  "primaryKey": true
+                },
+                {
+                  "name": "endpoint",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "document": {
+        "dsl": "1.0.3",
+        "namespace": "tests",
+        "name": "http-fixture",
+        "version": "1.0.0"
+      },
+      "do": [
+        {
+          "recordRequest": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "create",
+              "table": "test_http_requests",
+              "input": "${ {endpoint:.endpoint} }"
+            },
+            "output": {
+              "as": "${ $input + {requestLog:$output} }"
+            }
+          }
+        },
+        {
+          "readResponse": {
+            "call": "ferrisflow.primitive",
+            "with": {
+              "primitive": "database",
+              "operation": "read",
+              "table": "test_http_responses",
+              "primaryKey": "url",
+              "key": "${ .endpoint }",
+              "jsonFields": {
+                "response": "response_json"
+              }
+            }
+          }
+        },
+        {
+          "respond": {
+            "set": "${ if .fail == true then error(\"HTTP fixture failure\") else (.response) end }"
+          }
+        }
+      ]
+    }
+  ],
+  "hooks": {
+    "postInstall": "setup-fixtures"
+  }
+}

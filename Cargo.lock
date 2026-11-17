@@ -2941,7 +2941,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ferris-workflow"
+name = "ferrisflow"
 version = "0.1.0"
 dependencies = [
  "ammonia",

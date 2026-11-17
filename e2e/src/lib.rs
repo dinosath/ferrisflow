@@ -101,7 +101,7 @@ impl TestEnvironment {
         println!("DATABASE_URL for app: {}", database_url_for_app);
 
         println!("Starting app container...");
-        let app_image = GenericImage::new("ferris-workflow", "latest")
+        let app_image = GenericImage::new("ferrisflow", "latest")
             .with_exposed_port(8080.tcp())
 
             .with_env_var("DATABASE_URL", &database_url_for_app)

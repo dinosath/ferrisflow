@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "example.novels",
+  "name": "Novels",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "id": "ferrisflow.content-types",
+      "version": "^1.0.0"
+    }
+  ],
+  "resources": [
+    {
+      "type": "content-type",
+      "definition": {
+        "uid": "novels",
+        "display_name": "Novels",
+        "schema": {
+          "fields": [
+            {
+              "name": "title",
+              "label": "Title",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "author",
+              "label": "Author",
+              "type": "text",
+              "required": true
+            },
+            {
+              "name": "synopsis",
+              "label": "Synopsis",
+              "type": "richtext",
+              "required": false
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "novels-table",
+      "name": "Novels",
+      "type": "datatable",
+      "dataSource": {
+        "api": {
+          "method": "GET",
+          "path": "/api/collections/novels"
+        }
+      },
+      "config": {
+        "columns": [
+          {
+            "label": "Title",
+            "mapping": "title"
+          },
+          {
+            "label": "Author",
+            "mapping": "author"
+          },
+          {
+            "label": "Synopsis",
+            "mapping": "synopsis"
+          }
+        ],
+        "createAction": {
+          "workflow": "novels-create",
+          "input": {
+            "title": "",
+            "author": "",
+            "synopsis": ""
+          }
+        },
+        "rowAction": {
+          "workflow": "novels-update"
+        },
+        "workflowNames": [
+          "novels-list",
+          "novels-create",
+          "novels-read",
+          "novels-update",
+          "novels-delete"
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "id": "novels",
+      "title": "Novels",
+      "view": "novels-table"
+    }
+  ],
+  "menuItems": [
+    {
+      "label": "Novels",
+      "path": "/plugins/example.novels/pages/novels",
+      "icon": "table",
+      "page": "novels"
+    }
+  ]
+}

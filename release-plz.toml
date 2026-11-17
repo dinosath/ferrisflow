@@ -4,6 +4,7 @@ git_release_enable = false
 git_tag_enable = true
 git_release_type = "auto"
 release_always = false
+features_always_increment_minor = true
 semver_check = false
 release_commits = "^(feat|fix|perf|refactor|revert)(\\([^)]*\\))?(!)?:"
 

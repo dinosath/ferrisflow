@@ -1,0 +1,275 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "resources-example-crud",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Exercise the example plugin through its generated REST API and physical table.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "reapply": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/example.novels",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "${ .packages.example }"
+        },
+        "output": {
+          "as": "${ $input + {reapplied:$output} }"
+        }
+      }
+    },
+    {
+      "read_workflows": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "workflows"
+        },
+        "output": {
+          "as": "${ $input + {workflows:$output} }"
+        }
+      }
+    },
+    {
+      "assertFiveCrudWorkflows": {
+        "set": "${ if ((.workflows|map(select(.name|startswith(\"example.novels \u00b7 novels-\")))|length)==5) then (.) else error(\"Reapplying a package must not duplicate generated workflows\") end }"
+      }
+    },
+    {
+      "databaseTables": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/database/tables",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {tables:$output} }"
+        }
+      }
+    },
+    {
+      "assertPhysicalTable": {
+        "set": "${ if (.tables.tables|contains([\"novels\"])) then (.) else error(\"Plugin import must create a physical table\") end }"
+      }
+    },
+    {
+      "create": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "title": "Dune",
+            "author": "Frank Herbert"
+          }
+        },
+        "output": {
+          "as": "${ $input + {created:$output} }"
+        }
+      }
+    },
+    {
+      "assertCreate": {
+        "set": "${ if (.created.success==true) then (.) else error(\"Create must succeed\") end }"
+      }
+    },
+    {
+      "list": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {listed:$output} }"
+        }
+      }
+    },
+    {
+      "assertList": {
+        "set": "${ if (.listed.output[0].title==\"Dune\") then (.) else error(\"List must return stored records\") end }"
+      }
+    },
+    {
+      "read": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels/1",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {read:$output} }"
+        }
+      }
+    },
+    {
+      "assertRead": {
+        "set": "${ if (.read.output.author==\"Frank Herbert\") then (.) else error(\"Read must return the selected record\") end }"
+      }
+    },
+    {
+      "update": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels/1",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "title": "Dune Messiah"
+          }
+        },
+        "output": {
+          "as": "${ $input + {updated:$output} }"
+        }
+      }
+    },
+    {
+      "assertUpdate": {
+        "set": "${ if (.updated.success==true) then (.) else error(\"Update must succeed\") end }"
+      }
+    },
+    {
+      "readUpdated": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels/1",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {read:$output} }"
+        }
+      }
+    },
+    {
+      "assertUpdatedValue": {
+        "set": "${ if (.read.output.title==\"Dune Messiah\") then (.) else error(\"Update must persist the new title\") end }"
+      }
+    },
+    {
+      "tableRecords": {
+        "call": "http",
+        "with": {
+          "method": "GET",
+          "endpoint": "@TEST_BASE_URL@/api/database/tables/novels/records",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {tableRecords:$output} }"
+        }
+      }
+    },
+    {
+      "delete": {
+        "call": "http",
+        "with": {
+          "method": "DELETE",
+          "endpoint": "@TEST_BASE_URL@/api/collections/novels/1",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {deleted:$output} }"
+        }
+      }
+    },
+    {
+      "assertDelete": {
+        "set": "${ if (.deleted.success==true) then (.) else error(\"Delete must succeed\") end }"
+      }
+    },
+    {
+      "read_novels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "novels"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "assertDeleted": {
+        "set": "${ if ((.novels|length)==0) then (.) else error(\"Deleted records must be removed\") end }"
+      }
+    },
+    {
+      "registry": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "read",
+          "table": "content_types",
+          "primaryKey": "uid",
+          "key": "novels",
+          "jsonFields": {
+            "schema": "schema_json"
+          }
+        },
+        "output": {
+          "as": "${ $input + {registry:$output} }"
+        }
+      }
+    },
+    {
+      "assertSchema": {
+        "set": "${ if (.registry.schema.fields[0].name==\"title\") then (.) else error(\"Collection schemas must be registered\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "resources-example-crud"
+        }
+      }
+    }
+  ]
+}
