@@ -45,7 +45,8 @@
     {
       "workflow": "resources/custom-resource.json",
       "plugins": [
-        "fixtures/plugin.json"
+        "fixtures/plugin.json",
+        "fixtures/settings-provider.json"
       ]
     },
     {

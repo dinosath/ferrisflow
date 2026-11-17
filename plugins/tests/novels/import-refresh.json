@@ -212,7 +212,7 @@
           "workflow": {
             "namespace": "local",
             "name": "refresh-brightnovels",
-            "version": "0.2.0",
+            "version": "0.2.1",
             "input": {
               "novel_url": "https://brightnovels.com/series/dune",
               "last_downloaded_chapter": 999

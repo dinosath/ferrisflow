@@ -280,7 +280,7 @@
     },
     {
       "assertEverythingRolledBack": {
-        "set": "${ if ((.tables.tables|contains([\"rolled_back_settings\"])|not) and (.registry|length)==0 and (.plugins|map(select(.uid==\"tests.rollback-consumer\"))|length)==0 and (.workflows|map(select(.name|contains(\"must-rollback\")))|length)==0) then (.) else error(\"A post-install failure must roll back tables, registry rows, workflows, and the importing plugin\") end }"
+        "set": "${ if ((.tables.tables|contains([\"rolled_back_settings\"])) == false and (.registry|length)==0 and (.plugins|map(select(.uid==\"tests.rollback-consumer\"))|length)==0 and (.workflows|map(select(.name|contains(\"must-rollback\")))|length)==0) then (.) else error(\"A post-install failure must roll back tables, registry rows, workflows, and the importing plugin\") end }"
       }
     },
     {

@@ -102,7 +102,8 @@
       "discoverSchedule": {
         "wait": {
           "seconds": 7
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {
@@ -146,7 +147,8 @@
       "discoverDisable": {
         "wait": {
           "seconds": 7
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {
@@ -166,7 +168,8 @@
       "allowMoreTicks": {
         "wait": {
           "milliseconds": 300
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {
@@ -184,7 +187,7 @@
     },
     {
       "assertStopped": {
-        "set": "${ if ((.before|length)==(.after|length)) then (.) else error(\"Disabling a plugin must cancel future scheduled runs\") end }"
+        "set": "${ if ((.before|length)==(.after|length)) then (.) else error(\"Disabling a plugin must cancel future scheduled runs: before=\" + (.before|tostring) + \", after=\" + (.after|tostring)) end }"
       }
     },
     {
@@ -210,7 +213,8 @@
       "discoverEnable": {
         "wait": {
           "seconds": 7
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {
@@ -251,7 +255,8 @@
       "discoverRemoval": {
         "wait": {
           "seconds": 7
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {
@@ -271,7 +276,8 @@
       "allowRemovedTicks": {
         "wait": {
           "milliseconds": 300
-        }
+        },
+        "output": { "as": "$input" }
       }
     },
     {

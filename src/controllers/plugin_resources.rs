@@ -97,7 +97,9 @@ async fn apply<C: ConnectionTrait + TransactionTrait + Send + Sync + 'static>(
                     .as_array()
                     .and_then(|items| items.iter().find(|w| w["document"]["name"] == workflow_name))
                     .ok_or_else(|| format!("Missing resource {hook} workflow '{workflow_name}'"))?;
-                primitives::run(db.clone(), definition, input.clone()).await?;
+                primitives::run(db.clone(), definition, input.clone()).await.map_err(|error| {
+                    format!("Resource '{name}' {hook} workflow '{workflow_name}' failed: {error}")
+                })?;
             } else if hook == "create" {
                 return Err(format!("Resource '{name}' needs a create workflow"));
             }

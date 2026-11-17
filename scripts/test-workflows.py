@@ -37,6 +37,17 @@ def request(base, method, path, body=None):
 
 def prepare(value, base, functions=None):
     """Resolve server URLs and declaratively substitute function implementations."""
+    def expression(value):
+        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            return value[2:-1].strip()
+        if isinstance(value, dict):
+            return "{" + ",".join(
+                f"{json.dumps(key)}:{expression(item)}" for key, item in value.items()
+            ) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(expression(item) for item in value) + "]"
+        return json.dumps(value, separators=(",", ":"))
+
     if isinstance(value, list):
         return [prepare(item, base, functions) for item in value]
     if isinstance(value, str):
@@ -48,7 +59,10 @@ def prepare(value, base, functions=None):
     implementation = (functions or {}).get(function) if isinstance(function, str) else None
     if implementation:
         result.pop("call")
-        result["run"] = {"workflow": {**implementation, "input": result.pop("with", {})}}
+        arguments = result.pop("with", {})
+        result["run"] = {
+            "workflow": {**implementation, "input": "${ " + expression(arguments) + " }"}
+        }
     return result
 
 

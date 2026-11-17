@@ -19,7 +19,7 @@
   "do": [
     {
       "legacyManifest": {
-        "set": "${ . + {legacy:(.packages.novels + {resources:(.packages.novels.resources|map(. + {definition:(.definition + {schema:(.definition.schema + {fields:(.definition.schema.fields|map(. + {unique:false}))})})}))})} }"
+      "set": "${ . + {legacy:(.packages.novels + {workflows:[],resources:(.packages.novels.resources|map(. + {definition:(.definition + {schema:(.definition.schema + {fields:(.definition.schema.fields|map(. + {unique:false}))})})}))})} }"
       }
     },
     {
@@ -66,7 +66,7 @@
           "headers": {
             "Content-Type": "application/json"
           },
-          "body": "${ .packages.novels }"
+          "body": "${ .packages.novels + {workflows:[]} }"
         },
         "output": {
           "as": "${ $input + {upgraded:$output} }"

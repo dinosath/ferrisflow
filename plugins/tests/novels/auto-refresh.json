@@ -72,6 +72,7 @@
               "input": {
                 "title": "Broken",
                 "source": "bad-url",
+                "source_site": "brightnovels.com",
                 "auto_update": true
               }
             },
@@ -81,6 +82,7 @@
               "input": {
                 "title": "Dune",
                 "source": "https://brightnovels.com/series/dune",
+                "source_site": "brightnovels.com",
                 "auto_update": true
               }
             },
@@ -90,6 +92,7 @@
               "input": {
                 "title": "Disabled",
                 "source": "https://brightnovels.com/series/disabled",
+                "source_site": "brightnovels.com",
                 "auto_update": false
               }
             }
@@ -106,7 +109,7 @@
           "workflow": {
             "namespace": "local",
             "name": "refresh-auto-novels",
-            "version": "0.2.0",
+            "version": "0.5.0",
             "input": null
           }
         },
