@@ -26,10 +26,8 @@ struct TempDirectory(PathBuf);
 
 impl TempDirectory {
     fn create(label: &str) -> io::Result<Self> {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(io::Error::other)?
-            .as_nanos();
+        let nonce =
+            SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_nanos();
         let path = env::temp_dir()
             .join(format!("ferrisflow-workflow-tests-{}-{nonce}-{label}", std::process::id()));
         fs::create_dir(&path)?;
@@ -62,11 +60,9 @@ async fn run() -> Result<(), AnyError> {
     let suite_path =
         resolve_path(root, args.suite.unwrap_or_else(|| PathBuf::from("plugins/tests/suite.json")));
     let suite: Value = read_json(&suite_path)?;
-    let directory = suite_path.parent().ok_or_else(|| "suite path has no parent directory")?;
-    let cases = suite
-        .get("cases")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "suite must contain a cases array")?;
+    let directory = suite_path.parent().ok_or("suite path has no parent directory")?;
+    let cases =
+        suite.get("cases").and_then(Value::as_array).ok_or("suite must contain a cases array")?;
     let selected: Vec<Case> = cases
         .iter()
         .filter_map(parse_case)
@@ -80,10 +76,7 @@ async fn run() -> Result<(), AnyError> {
         Some(path) => resolve_path(root, path),
         None => build_server(root)?,
     };
-    let client = Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(90))
-        .build()?;
+    let client = Client::builder().no_proxy().timeout(Duration::from_secs(90)).build()?;
     let mut failures = 0;
     for (index, case) in selected.iter().enumerate() {
         match execute_case(&client, &binary, directory, &suite, case, index).await {
@@ -155,7 +148,7 @@ fn build_server(root: &Path) -> Result<PathBuf, AnyError> {
     let target_dir = metadata
         .get("target_directory")
         .and_then(Value::as_str)
-        .ok_or_else(|| "cargo metadata did not return target_directory")?;
+        .ok_or("cargo metadata did not return target_directory")?;
     let executable = if cfg!(windows) { "ferrisflow.exe" } else { "ferrisflow" };
     Ok(Path::new(target_dir).join("debug").join(executable))
 }
@@ -310,15 +303,15 @@ fn prepare(value: Value, base: &str, functions: &Value) -> Value {
                 .into_iter()
                 .map(|(key, value)| (key, prepare(value, base, functions)))
                 .collect();
-            if let Some(function_name) = result.get("call").and_then(Value::as_str) {
-                if let Some(implementation) = functions.get(function_name).cloned() {
-                    result.remove("call");
-                    let arguments = result.remove("with").unwrap_or_else(|| json!({}));
-                    let input_expression = format!("${{ {} }}", expression(&arguments));
-                    let mut workflow = implementation.as_object().cloned().unwrap_or_default();
-                    workflow.insert("input".to_owned(), Value::String(input_expression));
-                    result.insert("run".to_owned(), json!({"workflow": Value::Object(workflow)}));
-                }
+            if let Some(function_name) = result.get("call").and_then(Value::as_str)
+                && let Some(implementation) = functions.get(function_name).cloned()
+            {
+                result.remove("call");
+                let arguments = result.remove("with").unwrap_or_else(|| json!({}));
+                let input_expression = format!("${{ {} }}", expression(&arguments));
+                let mut workflow = implementation.as_object().cloned().unwrap_or_default();
+                workflow.insert("input".to_owned(), Value::String(input_expression));
+                result.insert("run".to_owned(), json!({"workflow": Value::Object(workflow)}));
             }
             Value::Object(result)
         }
@@ -403,9 +396,7 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
                 }
             }
             b'?' => {
-                for index in 1..=value.len() {
-                    next[index] = row[index - 1];
-                }
+                next[1..].copy_from_slice(&row[..value.len()]);
             }
             byte => {
                 for index in 1..=value.len() {
