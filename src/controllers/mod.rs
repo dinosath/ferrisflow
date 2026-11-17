@@ -5,6 +5,7 @@ pub(crate) mod plugin_resources;
 pub mod plugins;
 pub(crate) mod primitives;
 pub mod workflow;
+pub mod users;
 
 use crate::app_state::AppState;
 use axum::Router;
@@ -23,6 +24,7 @@ pub fn routes() -> Router<AppState> {
             axum::routing::put(ai::update_provider).delete(ai::delete_provider),
         )
         .merge(workflow::routes())
+        .merge(users::routes())
         .merge(plugins::routes())
         .merge(content_views::routes())
 }
