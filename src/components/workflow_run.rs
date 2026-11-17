@@ -36,6 +36,7 @@ pub fn WorkflowRunDialog(
         .unwrap_or("json");
     let view_config =
         ui.get("view").and_then(|view| view.get("config")).cloned().unwrap_or_default();
+    let output_view = ui.get("output_view").cloned().unwrap_or_default();
     let schema_properties = ui
         .get("input_schema")
         .and_then(|schema| schema.get("properties"))
@@ -130,7 +131,7 @@ pub fn WorkflowRunDialog(
                                                     option { value: "", "Choose…" }
                                                     for item in options { if let Some(choice) = item.as_str() { option { value: "{choice}", "{choice}" } } }
                                                 }
-                                            } else if kind == "object" || kind == "array" {
+                                            } else if kind == "object" || kind == "array" || field_schema.get("multiline").and_then(serde_json::Value::as_bool) == Some(true) {
                                                 textarea { class: "workflow-run-input", rows: "5", value: "{value}", placeholder: "{placeholder}", disabled: running(), spellcheck: "false", oninput: move |event| input_json.set(set_input_field(&input_json(), &key, event.value(), &kind)) }
                                             } else {
                                                 input { r#type: if kind == "number" || kind == "integer" { "number" } else { "text" }, value: "{value}", placeholder: "{placeholder}", disabled: running(), oninput: move |event| input_json.set(set_input_field(&input_json(), &key, event.value(), &kind)) }
@@ -154,7 +155,14 @@ pub fn WorkflowRunDialog(
                             div { class: "workflow-run-result workflow-run-result--success",
                                 strong { "Workflow completed" }
                                 if let Some(output) = result.output.as_ref() {
-                                    pre { "{serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())}" }
+                                    if output_view["type"] == "article" && output_view["bodyField"].as_str().and_then(|field| output.get(field)).and_then(serde_json::Value::as_str).is_some() {
+                                        article { class: "workflow-run-article",
+                                            h3 { {output_view["titleField"].as_str().and_then(|field| output.get(field)).and_then(serde_json::Value::as_str).unwrap_or("Record")} }
+                                            div { dangerous_inner_html: ammonia::clean(output_view["bodyField"].as_str().and_then(|field| output.get(field)).and_then(serde_json::Value::as_str).unwrap_or_default()) }
+                                        }
+                                    } else {
+                                        pre { "{serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())}" }
+                                    }
                                 }
                             }
                         } else {
@@ -206,6 +214,10 @@ fn set_input_field(raw: &str, field: &str, value: String, kind: &str) -> String 
         .ok()
         .filter(serde_json::Value::is_object)
         .unwrap_or_else(|| serde_json::json!({}));
+    if value.trim().is_empty() && matches!(kind, "number" | "integer") {
+        input.as_object_mut().unwrap().remove(field);
+        return input.to_string();
+    }
     input[field] = match kind {
         "number" | "integer" => value
             .parse::<serde_json::Number>()

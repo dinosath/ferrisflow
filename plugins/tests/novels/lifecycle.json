@@ -1,0 +1,120 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-lifecycle",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Keep unrelated definitions isolated and reject execution for disabled plugins.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "saveUnrelatedInvalidWorkflow": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/workflows",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "name": "Unrelated",
+            "active": true,
+            "version": 1,
+            "definition_json": "${ .packages.brokenWorkflow|tostring }"
+          }
+        },
+        "output": {
+          "as": "${ $input + {unrelated:$output} }"
+        }
+      }
+    },
+    {
+      "executeIndependentWorkflow": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/workflows/execute",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "definition_json": "{\"document\": {\"dsl\": \"1.0.3\", \"namespace\": \"tests\", \"name\": \"independent\", \"version\": \"1.0.0\"}, \"do\": [{\"rows\": {\"call\": \"ferrisflow.primitive\", \"with\": {\"primitive\": \"database\", \"operation\": \"list\", \"table\": \"local_novels_novel\"}}}]}",
+            "input": {}
+          }
+        },
+        "output": {
+          "as": "${ $input + {independent:$output} }"
+        }
+      }
+    },
+    {
+      "assertUnrelatedIsolation": {
+        "set": "${ if (.independent.success==true) then (.) else error(\"An unrelated invalid workflow must not break execution\") end }"
+      }
+    },
+    {
+      "disablePlugin": {
+        "call": "http",
+        "with": {
+          "method": "PUT",
+          "endpoint": "@TEST_BASE_URL@/api/plugins/local.novels/enabled",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "enabled": false
+          }
+        },
+        "output": {
+          "as": "${ $input + {disabled:$output} }"
+        }
+      }
+    },
+    {
+      "executeDisabledPlugin": {
+        "call": "http",
+        "with": {
+          "method": "POST",
+          "endpoint": "@TEST_BASE_URL@/api/workflows/execute",
+          "output": "content",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "definition_json": "${ .packages.novels.workflows|map(select(.document.name==\"save-brightnovels\"))|first|tostring }",
+            "input": {}
+          }
+        },
+        "output": {
+          "as": "${ $input + {disabledRun:$output} }"
+        }
+      }
+    },
+    {
+      "assertDisabledPlugin": {
+        "set": "${ if (.disabledRun.success==false and (.disabledRun.error|contains(\"not installed or enabled\"))) then (.) else error(\"A disabled plugin must not execute\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-lifecycle"
+        }
+      }
+    }
+  ]
+}

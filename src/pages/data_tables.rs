@@ -9,11 +9,38 @@ use dioxus::prelude::*;
 use crate::{
     Route,
     pages::{
-        api::{list_workflows, save_workflow},
+        api::{api_url, list_database_tables, list_workflows, save_workflow},
         models::{Workflow, WorkflowPayload},
         shared::{ErrorPanel, LoadingPanel, Shell, TableStatus, format_date},
     },
 };
+
+async fn load_plugin_tables() -> Result<Vec<(String, String, String)>, String> {
+    let response =
+        reqwest::get(api_url("/api/plugins")).await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(response.text().await.unwrap_or_default());
+    }
+    let plugins =
+        response.json::<Vec<serde_json::Value>>().await.map_err(|error| error.to_string())?;
+    let mut views = Vec::new();
+    for plugin in plugins {
+        if plugin["enabled"] != true {
+            continue;
+        }
+        if let Some(items) = plugin["manifest"]["views"].as_array() {
+            for view in items {
+                if view["type"] == "datatable"
+                    && let (Some(plugin_id), Some(view_id), Some(name)) =
+                        (plugin["uid"].as_str(), view["id"].as_str(), view["name"].as_str())
+                {
+                    views.push((plugin_id.to_owned(), view_id.to_owned(), name.to_owned()));
+                }
+            }
+        }
+    }
+    Ok(views)
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum DataView {
@@ -31,6 +58,10 @@ struct CustomView {
 #[component]
 pub(crate) fn DataTables() -> Element {
     let workflows = use_server_future(list_workflows)?;
+    let tables = use_server_future(list_database_tables)?;
+    let plugin_tables = use_server_future(load_plugin_tables)?;
+    let mut selected_plugin = use_signal(|| None::<(String, String)>);
+    let mut selected_table = use_signal(|| "workflows".to_owned());
     let mut view = use_signal(|| DataView::Table);
     let selected_id = use_signal(|| None::<i32>);
     let mut search = use_signal(String::new);
@@ -49,13 +80,25 @@ pub(crate) fn DataTables() -> Element {
                 aside { class: "data-sidebar panel",
                     div { class: "data-sidebar__heading",
                         span { class: "data-eyebrow", "DATABASE" }
-                        span { class: "database-kind", "SQLite" }
+                        span { class: "database-kind", "{tables().and_then(Result::ok).map(|value| value.backend).unwrap_or_default()}" }
                     }
-                    button { class: "data-table-source selected", r#type: "button",
+                    button { class: if selected_plugin().is_none() && selected_table() == "workflows" { "data-table-source selected" } else { "data-table-source" }, r#type: "button", onclick: move |_| { selected_plugin.set(None); selected_table.set("workflows".into()); },
                         span { class: "data-table-source__icon", Icon { name: "table" } }
                         span { "Workflows" }
                         span { class: "data-table-source__count", match workflows() { Some(Ok(ref rows)) => rows.len().to_string(), _ => "…".to_string() } }
                     }
+                    if let Some(Ok(database)) = tables() {
+                        for table in database.tables.into_iter().filter(|table| table != "workflows" && table != "public.workflows") {
+                            button { class: if selected_plugin().is_none() && selected_table() == table { "data-table-source selected" } else { "data-table-source" }, r#type: "button", onclick: { let table=table.clone(); move |_| { selected_plugin.set(None); selected_table.set(table.clone()); } }, span { Icon { name: "table" } } "{table}" }
+                        }
+                    }
+                    if let Some(Err(message)) = tables() { ErrorPanel { message } }
+                    if let Some(Ok(views)) = plugin_tables() {
+                        for (plugin_id,view_id,name) in views {
+                            button { class: if selected_plugin() == Some((plugin_id.clone(),view_id.clone())) { "data-table-source selected" } else { "data-table-source" }, r#type: "button", onclick: { let plugin_id=plugin_id.clone(); let view_id=view_id.clone(); move |_| selected_plugin.set(Some((plugin_id.clone(),view_id.clone()))) }, span { Icon { name: "table" } } "{name}" }
+                        }
+                    }
+                    if let Some(Err(message)) = plugin_tables() { ErrorPanel { message } }
                     div { class: "data-sidebar__divider" }
                     div { class: "data-sidebar__heading",
                         span { class: "data-eyebrow", "CUSTOM VIEWS" }
@@ -88,6 +131,11 @@ pub(crate) fn DataTables() -> Element {
                     div { class: "data-sidebar__footer", span { class: "database-status-dot" } "Connected database" }
                 }
 
+                if let Some((plugin_id,view_id)) = selected_plugin() {
+                    super::plugin_view::PluginViewPage { key: "{plugin_id}-{view_id}", plugin_id, view_id, embedded: true }
+                } else if selected_table() != "workflows" {
+                    DatabaseTable { key: "{selected_table()}", table: selected_table() }
+                } else {
                 section { class: "data-main panel",
                     div { class: "data-table-heading",
                         div {
@@ -131,9 +179,45 @@ pub(crate) fn DataTables() -> Element {
                         None => rsx! { LoadingPanel {} },
                     }
                 }
+                }
             }
         }
     }
+}
+
+#[component]
+fn DatabaseTable(table: String) -> Element {
+    let selected = table.clone();
+    let records = use_server_future(move || {
+        let table = selected.clone();
+        async move {
+            let response = reqwest::get(api_url(&format!("/api/database/tables/{table}/records")))
+                .await
+                .map_err(|error| error.to_string())?;
+            if !response.status().is_success() {
+                return Err(response.text().await.unwrap_or_default());
+            }
+            response.json::<serde_json::Value>().await.map_err(|error| error.to_string())
+        }
+    })?;
+    rsx! { section { class: "data-main panel",
+        div { class: "data-table-heading", h2 { "{table}" } }
+        match records() {
+            Some(Ok(data)) => {
+                let columns=data["columns"].as_array().map(|columns|columns.iter().filter_map(|column|column.as_str().map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
+                let rows=data["rows"].as_array().cloned().unwrap_or_default();
+                rsx! { DataTable { toolbar: rsx! {}, columns: columns.clone(), row_ids: rows.iter().enumerate().map(|(index,row)|row.get("id").map(ToString::to_string).unwrap_or(index.to_string())).collect::<Vec<_>>(), empty_message: "This table has no records yet.".to_owned(),
+                    for (index,row) in rows.into_iter().enumerate() {
+                        DataTableRow { id: row.get("id").map(ToString::to_string).unwrap_or(index.to_string()), index,
+                            for (column_index,column) in columns.iter().enumerate() { DataTableCell { index: column_index, "{row[column].as_str().map(str::to_owned).unwrap_or_else(|| row[column].to_string())}" } }
+                        }
+                    }
+                } }
+            },
+            Some(Err(message)) => rsx! { ErrorPanel { message } },
+            None => rsx! { LoadingPanel {} },
+        }
+    } }
 }
 
 #[component]

@@ -1,0 +1,144 @@
+{
+  "document": {
+    "dsl": "1.0.3",
+    "namespace": "tests",
+    "name": "novels-atomic-rollback",
+    "version": "1.0.0",
+    "metadata": {
+      "test": {
+        "description": "Force a real database constraint failure inside the plugin persistence batch.",
+        "endpoint": "@TEST_BASE_URL@"
+      }
+    }
+  },
+  "timeout": {
+    "after": {
+      "seconds": 75
+    }
+  },
+  "do": [
+    {
+      "forceChapterConstraint": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "ensure",
+          "table": "local_novels_chapter",
+          "columns": [
+            {
+              "name": "number",
+              "type": "integer",
+              "unique": true
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {constraint:$output} }"
+        }
+      }
+    },
+    {
+      "failedBatch": {
+        "try": [
+          {
+            "attempt": {
+              "run": {
+                "workflow": {
+                  "namespace": "local",
+                  "name": "save-brightnovels",
+                  "version": "0.2.0",
+                  "input": {
+                    "title": "Dune",
+                    "source": "https://brightnovels.com/series/dune",
+                    "last_downloaded_chapter": 1,
+                    "chapters": [
+                      {
+                        "number": 1,
+                        "name": "One",
+                        "url": "https://brightnovels.com/series/dune/one",
+                        "body": "One"
+                      },
+                      {
+                        "number": 1,
+                        "name": "Duplicate number",
+                        "url": "https://brightnovels.com/series/dune/two",
+                        "body": "Two"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "unexpectedSuccess": {
+              "set": {
+                "caught": false
+              }
+            }
+          }
+        ],
+        "catch": {
+          "as": "failure",
+          "do": [
+            {
+              "expectedFailure": {
+                "set": {
+                  "caught": true,
+                  "failure": "${ $failure }"
+                }
+              }
+            }
+          ]
+        },
+        "output": {
+          "as": "${ $input + {failedBatch:$output} }"
+        }
+      }
+    },
+    {
+      "assert_failedBatch": {
+        "set": "${ if (.failedBatch.caught == true and .failedBatch.failure.status == 400) then (.) else error(\"failedBatch must fail with status 400\") end }"
+      }
+    },
+    {
+      "read_novels": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_novel"
+        },
+        "output": {
+          "as": "${ $input + {novels:$output} }"
+        }
+      }
+    },
+    {
+      "read_chapters": {
+        "call": "ferrisflow.primitive",
+        "with": {
+          "primitive": "database",
+          "operation": "list",
+          "table": "local_novels_chapter"
+        },
+        "output": {
+          "as": "${ $input + {chapters:$output} }"
+        }
+      }
+    },
+    {
+      "assertAtomicRollback": {
+        "set": "${ if ((.novels|length)==0 and (.chapters|length)==0) then (.) else error(\"A constraint failure on the second chapter must roll back the novel and first chapter\") end }"
+      }
+    },
+    {
+      "passed": {
+        "set": {
+          "passed": true,
+          "scenario": "novels-atomic-rollback"
+        }
+      }
+    }
+  ]
+}

@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ferris-workflow-deployment
+  name: ferrisflow-deployment
   labels:
-    app: ferris-workflow
+    app: ferrisflow
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ferris-workflow
+      app: ferrisflow
   template:
     metadata:
       labels:
-        app: ferris-workflow
+        app: ferrisflow
     spec:
       containers:
-        - name: ferris-workflow
+        - name: ferrisflow
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           ports:
             - containerPort: {{ .Values.service.port }}
