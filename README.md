@@ -105,6 +105,40 @@ PUT    /api/workflows/:id
 DELETE /api/workflows/:id
 ```
 
+### OAuth 2.0 API authentication
+
+The API can validate OAuth 2.0 bearer access tokens with an RFC 7662 token
+introspection endpoint. Set `AUTH_REQUIRED=true` to require authentication on
+API requests, then configure `OAUTH_INTROSPECTION_URL`, `OAUTH_CLIENT_ID`, and
+`OAUTH_CLIENT_SECRET`. The introspection client authenticates with HTTP Basic
+and sends each access token in the request body. Remote introspection URLs must
+use HTTPS; HTTP is accepted only for loopback development. Redirects are not
+followed. `/api/health` remains public.
+
+When authentication is enabled, requests without an active bearer token receive
+`401`; if the identity provider cannot be reached, requests receive `503`.
+Authenticated requests carry the provider's `sub`, optional `username`, and
+space-delimited `scope` values as an authorization principal. The
+`GET /api/auth/me` endpoint returns that principal. With `AUTH_REQUIRED=true`,
+GET-like requests require `ferrisflow:read`, while POST, PUT, PATCH, and DELETE
+require `ferrisflow:write`. Set `OAUTH_READ_SCOPE` or `OAUTH_WRITE_SCOPE` to
+match the names issued by your provider. When `AUTH_REQUIRED` is unset or false,
+existing API routes keep their current unauthenticated behavior; the user
+administration routes remain admin-only in every mode.
+
+### User administration
+
+The service includes admin-only user CRUD endpoints: `GET` and `POST
+/api/users`, plus `GET`, `PUT`, and `DELETE /api/users/:id`. OAuth access tokens
+must include `ferrisflow:admin` (or the configured `OAUTH_ADMIN_SCOPE`). The
+local admin can use HTTP Basic authentication with username `admin` and the
+generated password. On first startup, Ferrisflow creates a 256-bit random
+password, saves a SHA-256 verifier in the `app_settings` config table, and
+prints the password once as a warning. Set `ADMIN_PASSWORD` to configure or
+rotate it explicitly; use a long random value for this override. User objects
+have `username`, optional `email`, and `display_name` fields. Use HTTPS when
+sending the admin password over a network.
+
 ### Plugin-defined content types
 
 Content type screens, REST routes, and CRUD workflow definitions are declared

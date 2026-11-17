@@ -11,6 +11,8 @@ pub mod models {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod app_state;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod auth;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ows;
 #[cfg(not(target_arch = "wasm32"))]
 mod workflow_schedules;
@@ -24,6 +26,7 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
 
     let mut router = axum::Router::new();
     router = router.merge(controllers::routes());
+    router = router.merge(auth::routes());
     let connect_service = connect::service(controllers::routes().with_state(state.clone()));
     router = router.route_service(
         "/entities.v1.EntityService/Execute",
@@ -52,5 +55,10 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
             HeaderValue::from_static("strict-origin-when-cross-origin"),
         ));
 
-    router.with_state(state)
+    router
+        .layer(axum::middleware::from_fn_with_state(
+            auth::AuthMiddlewareState { config: auth::AuthConfig::from_env(), db: state.db.clone() },
+            auth::authorize_request,
+        ))
+        .with_state(state)
 }
