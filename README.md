@@ -225,6 +225,18 @@ frontend files in a sibling `public/` directory; run the executable from the
 extracted directory to serve both the UI and API. The release build targets
 `x86_64-unknown-linux-gnu`.
 
+Stable GitHub Releases are deployed automatically by
+`.github/workflows/deploy.yml`. Configure the repository Actions secrets
+`FERRISFLOW_DEPLOY_HOST`, `FERRISFLOW_DEPLOY_USER`, `FERRISFLOW_DEPLOY_KEY`,
+and `FERRISFLOW_DEPLOY_KNOWN_HOSTS`. The workflow builds the fullstack app
+from the release tag, installs it into a versioned directory, switches the
+`current` symlink, restarts `ferrisflow.service`, and rolls back if its API
+health check fails. Prereleases are not deployed.
+
+The production systemd unit is tracked at `deploy/ferrisflow.service`. It runs
+as the `ferrisflow` user, stores SQLite data in `/var/lib/ferrisflow`, and
+binds to localhost behind Caddy.
+
 The cargo-dist workflow at `.github/workflows/release.yml` is generated from
 `dist-workspace.toml`. After changing the distribution configuration, run
 `dist generate --mode ci` to update it, then `dist generate --mode ci --check`

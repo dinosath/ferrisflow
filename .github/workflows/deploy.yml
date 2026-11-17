@@ -1,0 +1,106 @@
+name: Deploy Ferrisflow
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ferrisflow-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: dioxus-cli@0.7.10
+
+      - name: Build fullstack app
+        run: dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack
+
+      - name: Package release
+        run: |
+          mkdir -p package/public
+          cp target/dx/ferrisflow/release/web/server package/ferris-workflow
+          cp -a target/dx/ferrisflow/release/web/public/. package/public/
+          tar -czf ferrisflow.tar.gz -C package ferris-workflow public
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.FERRISFLOW_DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.FERRISFLOW_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Deploy release
+        env:
+          DEPLOY_HOST: ${{ secrets.FERRISFLOW_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.FERRISFLOW_DEPLOY_USER }}
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "Unexpected release tag: $VERSION" >&2
+            exit 1
+          fi
+          scp -o BatchMode=yes ferrisflow.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/ferrisflow-$VERSION.tar.gz"
+          ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- '$VERSION'" <<'REMOTE'
+          set -euo pipefail
+          version="$1"
+          release_dir="/opt/ferrisflow/releases/$version"
+          archive="/tmp/ferrisflow-$version.tar.gz"
+          previous="$(readlink -f /opt/ferrisflow/current || true)"
+
+          if [[ -e "$release_dir" ]]; then
+            echo "Release already exists: $version" >&2
+            exit 1
+          fi
+
+          install -d -m 0755 "$release_dir"
+          tar -xzf "$archive" --no-same-owner -C "$release_dir"
+          test -x "$release_dir/ferris-workflow"
+          test -d "$release_dir/public"
+          chmod -R a+rX "$release_dir"
+
+          ln -s "$release_dir" /opt/ferrisflow/current.next
+          mv -Tf /opt/ferrisflow/current.next /opt/ferrisflow/current
+          sudo -n /usr/bin/systemctl restart ferrisflow.service
+
+          healthy=false
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/api/workflows >/dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$healthy" != true ]]; then
+            echo "Health check failed for $version; rolling back." >&2
+            if [[ -n "$previous" ]]; then
+              ln -s "$previous" /opt/ferrisflow/current.next
+              mv -Tf /opt/ferrisflow/current.next /opt/ferrisflow/current
+              sudo -n /usr/bin/systemctl restart ferrisflow.service
+            fi
+            exit 1
+          fi
+
+          echo "Deployed $version"
+          REMOTE
