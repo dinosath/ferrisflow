@@ -31,3 +31,8 @@ fetches each compiled stylesheet from the image, and checks for the login
 screen rules. The fullstack test fetches the rendered page and verifies its
 stylesheet URLs return CSS with those rules. CI builds and loads each image
 before running its corresponding test.
+
+The release workflow also runs `release_styles` against the extracted
+cargo-dist archive after replacing its raw Cargo binary with the Dioxus CLI
+fullstack binary. This checks the executable and the `public/` assets that ship
+together in the release package.

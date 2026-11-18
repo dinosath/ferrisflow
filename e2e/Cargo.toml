@@ -17,6 +17,8 @@ log = "0.4"
 
 
 playwright-rs = "0.14.1"
+tempfile = "3"
+sha2 = "0.10"
 
 
 [dev-dependencies]
