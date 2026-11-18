@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack false --profile web-release --no-default-features --features web \
-    && /app/scripts/check-client-styles.sh /app/target/dx/ferrisflow/release/web/public \
+    && FERRISFLOW_WEB_PUBLIC_DIR=/app/target/dx/ferrisflow/release/web/public CARGO_TARGET_DIR=/app/target cargo test --locked --no-default-features --features fullstack --test web_styles client_build_contains_stylesheets \
     && mkdir -p /app/out \
     && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/
 
@@ -66,7 +66,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack \
-    && /app/scripts/check-fullstack-styles.sh /app/target/dx/ferrisflow/release/web/server /app/target/dx/ferrisflow/release/web/public \
+    && strip --strip-all /app/target/dx/ferrisflow/release/web/server \
+    && FERRISFLOW_WEB_SERVER=/app/target/dx/ferrisflow/release/web/server FERRISFLOW_WEB_PUBLIC_DIR=/app/target/dx/ferrisflow/release/web/public CARGO_TARGET_DIR=/app/target cargo test --locked --no-default-features --features fullstack --test web_styles fullstack_page_serves_stylesheets \
     && mkdir -p /app/out/public /data \
     && cp /app/target/dx/ferrisflow/release/web/server /app/out/ferrisflow \
     && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/public/
