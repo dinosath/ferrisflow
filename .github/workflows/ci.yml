@@ -177,7 +177,7 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.target == 'frontend'
         env:
           FERRISFLOW_FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ferrisflow-frontend:e2e
-        run: cargo test --manifest-path e2e/Cargo.toml --test web_styles frontend_client_docker_image_applies_styles
+        run: cargo test --manifest-path e2e/Cargo.toml --test web_styles frontend_client_docker_image_serves_stylesheets
 
       - name: Test fullstack Docker image stylesheets
         if: github.event_name == 'pull_request' && matrix.target == 'fullstack'

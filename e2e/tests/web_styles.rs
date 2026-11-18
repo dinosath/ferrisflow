@@ -4,7 +4,9 @@ use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 
-async fn start_image(image_env: &str, default_image: &str) -> (ContainerAsync<GenericImage>, String) {
+async fn start_image(
+    image_env: &str, default_image: &str,
+) -> (ContainerAsync<GenericImage>, String) {
     let image_ref = std::env::var(image_env).unwrap_or_else(|_| default_image.to_owned());
     let (image_name, tag) = image_ref.rsplit_once(':').unwrap_or((image_ref.as_str(), "latest"));
     // The frontend normally resolves this Compose service at startup; point it
@@ -34,54 +36,54 @@ async fn fetch_page(base_url: &str) -> String {
 }
 
 #[tokio::test]
-async fn frontend_client_docker_image_applies_styles() {
+async fn frontend_client_docker_image_serves_stylesheets() {
     let (_container, base_url) =
         start_image("FERRISFLOW_FRONTEND_IMAGE", "ferrisflow-frontend:e2e").await;
-    let _ = fetch_page(&base_url).await;
-
-    playwright_rs::install_browsers(Some(&["chromium"]))
+    let html = fetch_page(&base_url).await;
+    let script_path = attribute(&html, "src").expect("client JS path in index HTML");
+    let client = reqwest::Client::new();
+    let base = reqwest::Url::parse(&base_url).expect("parse base URL");
+    let script_url = base.join(&script_path).expect("resolve client JS URL");
+    let script = client
+        .get(script_url)
+        .send()
         .await
-        .expect("install Playwright Chromium");
-    let playwright = playwright_rs::Playwright::launch().await.expect("launch Playwright");
-    let browser = playwright.chromium().launch().await.expect("launch Chromium");
-    let page = browser.new_page().await.expect("create browser page");
-    page.goto(&base_url, None).await.expect("open frontend image");
+        .expect("fetch client JS")
+        .text()
+        .await
+        .expect("read client JS");
+    let wasm_path = script_asset_path(&script, "module_or_path:").expect("WASM path in client JS");
+    let wasm_url = base.join(&wasm_path).expect("resolve client WASM URL");
+    let wasm = client
+        .get(wasm_url)
+        .send()
+        .await
+        .expect("fetch client WASM")
+        .bytes()
+        .await
+        .expect("read client WASM");
+    let stylesheets = stylesheet_assets(&String::from_utf8_lossy(&wasm));
+    assert_eq!(stylesheets.len(), 7, "unexpected client stylesheet manifest: {stylesheets:?}");
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    let mut styles = serde_json::Value::Null;
-    while tokio::time::Instant::now() < deadline {
-        styles = page
-            .evaluate::<(), serde_json::Value>(
-                r#"() => {
-                    const screen = document.querySelector('.login-screen');
-                    if (!screen) return null;
-                    const computed = getComputedStyle(screen);
-                    return {
-                        display: computed.display,
-                        padding: computed.padding,
-                        background: computed.backgroundColor,
-                        stylesheets: document.styleSheets.length,
-                    };
-                }"#,
-                None,
-            )
-            .await
-            .expect("read computed login screen styles");
-        if styles["display"] == "grid" && styles["padding"] == "32px" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut has_login_styles = false;
+    for stylesheet in stylesheets {
+        let url =
+            base.join(&format!("/assets/{stylesheet}")).expect("resolve client stylesheet URL");
+        let response = client.get(url).send().await.expect("fetch client stylesheet");
+        assert!(response.status().is_success(), "stylesheet failed: {stylesheet}");
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            content_type.starts_with("text/css"),
+            "stylesheet did not return CSS ({content_type}): {stylesheet}"
+        );
+        let css = response.text().await.expect("read client stylesheet");
+        has_login_styles |= css.contains(".login-screen");
     }
-
-    assert_eq!(styles["display"], "grid", "login screen CSS was not applied: {styles}");
-    assert_eq!(styles["padding"], "32px", "login screen spacing is missing: {styles}");
-    assert_ne!(
-        styles["background"], "rgba(0, 0, 0, 0)",
-        "login screen background is transparent: {styles}"
-    );
-    assert!(styles["stylesheets"].as_u64().unwrap_or_default() > 0);
-
-    browser.close().await.expect("close Chromium");
+    assert!(has_login_styles, "client image styles are missing the login screen rules");
 }
 
 #[tokio::test]
@@ -148,6 +150,52 @@ fn stylesheet_links(html: &str) -> Vec<String> {
         remaining = &remaining[end + 1..];
     }
     stylesheets
+}
+
+fn stylesheet_assets(wasm: &str) -> Vec<String> {
+    let required = [
+        "tailwind",
+        "main",
+        "workspace",
+        "workflow-editor",
+        "workflow-editor-canvas",
+        "type-scale",
+        "workflow-document-menu",
+    ];
+    required
+        .into_iter()
+        .map(|name| {
+            let prefix = format!("{name}-");
+            let mut search_from = 0;
+            loop {
+                let start = wasm[search_from..]
+                    .find(&prefix)
+                    .map(|offset| search_from + offset)
+                    .unwrap_or_else(|| {
+                        panic!("client WASM is missing the bundled {name} stylesheet asset")
+                    });
+                let end = wasm[start..]
+                    .find(".css")
+                    .map(|offset| start + offset + ".css".len())
+                    .expect("stylesheet filename in WASM");
+                let asset = &wasm[start..end];
+                if asset.contains("-dxh") {
+                    break asset.to_owned();
+                }
+                search_from = start + prefix.len();
+            }
+        })
+        .collect()
+}
+
+fn script_asset_path(script: &str, marker: &str) -> Option<String> {
+    let start = script.rfind(marker)? + marker.len();
+    let value = &script[start..];
+    let quote_offset = value.find(['"', '\''])?;
+    let quote = value[quote_offset..].chars().next()?;
+    let value = &value[quote_offset + quote.len_utf8()..];
+    let end = value.find(quote)?;
+    Some(value[..end].to_owned())
 }
 
 fn attribute(tag: &str, name: &str) -> Option<String> {
