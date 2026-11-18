@@ -3,6 +3,7 @@
 #[cfg(feature = "ui")]
 use dioxus::prelude::*;
 
+mod api_http;
 #[cfg(feature = "ui")]
 mod components;
 #[cfg(feature = "ui")]
@@ -10,9 +11,9 @@ mod pages;
 
 #[cfg(feature = "ui")]
 use pages::{
-    AiSettings, Credentials, DataTables, EditPage, EditWorkflow, Executions, NewPage, NewWorkflow,
-    ContentTypeViewer, NovelViewer, Overview, Pages, PluginDetailPage, PluginPagePage, PluginViewPage, Plugins, Variables,
-    ViewWorkflowExecution, WorkflowDetail, WorkflowList,
+    AccountPage, AiSettings, ContentTypeViewer, Credentials, DataTables, EditPage, EditWorkflow, Executions,
+    NewPage, NewWorkflow, NovelViewer, Overview, Pages, PluginDetailPage, PluginPagePage,
+    PluginViewPage, Plugins, Variables, ViewWorkflowExecution, WorkflowDetail, WorkflowList,
 };
 
 #[cfg(any(feature = "api-server", all(feature = "server", not(feature = "ui"))))]
@@ -47,7 +48,9 @@ fn main() {
         let api = ferrisflow::build_router(state);
         // The Dioxus router renders app routes; merge in the API routes
         // while keeping the UI renderer as the final fallback.
-        Ok(dioxus::server::router(app).merge(api.reset_fallback()))
+        Ok(ferrisflow::with_security_headers(
+            dioxus::server::router(app).merge(api.reset_fallback()),
+        ))
     });
 }
 
@@ -66,7 +69,16 @@ compile_error!("Select a launch mode: web, server, or fullstack");
 #[cfg(feature = "ui")]
 fn app() -> Element {
     let tenant = use_signal(|| "Ferrisflow".to_string());
+    let mut principal = use_signal(|| None::<pages::api::AuthPrincipal>);
     use_context_provider(|| tenant);
+    use_context_provider(|| principal);
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(user) = pages::api::current_principal().await {
+                principal.set(Some(user));
+            }
+        });
+    });
     rsx! {
         document::Link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }
         document::Link { rel: "stylesheet", href: asset!("/assets/main.css") }
@@ -75,7 +87,11 @@ fn app() -> Element {
         document::Link { rel: "stylesheet", href: asset!("/assets/workflow-editor-canvas.css") }
         document::Link { rel: "stylesheet", href: asset!("/assets/type-scale.css") }
         document::Link { rel: "stylesheet", href: asset!("/assets/workflow-document-menu.css") }
-        Router::<Route> {}
+        if principal().is_some() {
+            Router::<Route> {}
+        } else {
+            pages::LoginPage {}
+        }
     }
 }
 
@@ -122,4 +138,6 @@ enum Route {
     Variables {},
     #[route("/settings/ai")]
     AiSettings {},
+    #[route("/account")]
+    AccountPage {},
 }

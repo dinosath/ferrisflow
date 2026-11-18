@@ -188,7 +188,7 @@ fn spawn_server(binary: &Path, temporary: &Path, port: u16, log: File) -> io::Re
         .env("IP", "127.0.0.1")
         .env("PORT", port.to_string())
         .env("DATABASE_URL", format!("sqlite://{}?mode=rwc", database.display()))
-        .env_remove("AUTH_REQUIRED")
+        .env("AUTH_REQUIRED", "false")
         .env_remove("OAUTH_INTROSPECTION_URL")
         .env_remove("OAUTH_CLIENT_ID")
         .env_remove("OAUTH_CLIENT_SECRET")

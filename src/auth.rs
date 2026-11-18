@@ -38,9 +38,7 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     pub fn from_env() -> Self {
-        let required = std::env::var("AUTH_REQUIRED")
-            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false);
+        let required = authentication_required(std::env::var("AUTH_REQUIRED").ok().as_deref());
         Self {
             required,
             introspection_url: std::env::var("OAUTH_INTROSPECTION_URL").ok(),
@@ -85,6 +83,10 @@ impl AuthConfig {
             && self.client_id.as_ref().is_some_and(|value| !value.is_empty())
             && self.client_secret.as_ref().is_some_and(|value| !value.is_empty())
     }
+}
+
+fn authentication_required(value: Option<&str>) -> bool {
+    value.is_none_or(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no"))
 }
 
 /// Authenticated OAuth principal, attached to requests after token validation.
@@ -151,27 +153,49 @@ pub async fn authorize_request(
                 let (username, password) = decoded.split_once(':')?;
                 Some((username.to_owned(), password.to_owned()))
             });
-        if let Some((username, password)) = decoded
-            && admin_password_matches(&state.db, &username, &password).await
-        {
-            let principal = AuthPrincipal {
-                subject: "admin".to_owned(),
-                username: Some("admin".to_owned()),
-                scopes: vec![
-                    config.admin_scope.clone(),
-                    config.read_scope.clone(),
-                    config.write_scope.clone(),
-                ],
-            };
-            request.extensions_mut().insert(principal);
-            return next.run(request).await;
-        }
-        if admin_endpoint {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error":"invalid_admin_credentials"})),
-            )
-                .into_response();
+        if let Some((username, password)) = decoded {
+            if username == "admin" && admin_password_matches(&state.db, &username, &password).await
+            {
+                let principal = AuthPrincipal {
+                    subject: "admin".to_owned(),
+                    username: Some("admin".to_owned()),
+                    scopes: vec![
+                        config.admin_scope.clone(),
+                        config.read_scope.clone(),
+                        config.write_scope.clone(),
+                    ],
+                };
+                request.extensions_mut().insert(principal);
+                return next.run(request).await;
+            }
+
+            if let Some(user) = authenticate_user(&state.db, &username, &password).await {
+                let principal = AuthPrincipal {
+                    subject: user.id.to_string(),
+                    username: Some(user.username),
+                    scopes: vec![config.read_scope.clone(), config.write_scope.clone()],
+                };
+                if admin_endpoint {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(serde_json::json!({
+                            "error":"insufficient_scope",
+                            "required_scope":config.admin_scope
+                        })),
+                    )
+                        .into_response();
+                }
+                request.extensions_mut().insert(principal);
+                return next.run(request).await;
+            }
+
+            if admin_endpoint {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error":"invalid_admin_credentials"})),
+                )
+                    .into_response();
+            }
         }
     }
 
@@ -270,18 +294,68 @@ pub async fn authorize_request(
 async fn admin_password_matches(
     db: &sea_orm::DatabaseConnection, username: &str, supplied_password: &str,
 ) -> bool {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
+
     if username != "admin" {
         return false;
     }
-    crate::models::app_setting::Entity::find_by_id("auth.admin_password")
+    let Some(setting) = crate::models::app_setting::Entity::find_by_id("auth.admin_password")
         .one(db)
         .await
         .ok()
         .flatten()
-        .is_some_and(|setting| {
-            let expected = crate::app_state::hash_admin_password(supplied_password);
-            constant_time_equal(setting.value.as_bytes(), expected.as_bytes())
+    else {
+        return false;
+    };
+    let matched = if setting.value.starts_with("$argon2") {
+        use argon2::password_hash::{PasswordHash, PasswordVerifier};
+        PasswordHash::new(&setting.value).ok().is_some_and(|hash| {
+            argon2::Argon2::default().verify_password(supplied_password.as_bytes(), &hash).is_ok()
         })
+    } else if let Some(legacy_hash) = setting.value.strip_prefix("sha256:") {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(supplied_password.as_bytes());
+        let supplied = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        constant_time_equal(legacy_hash.as_bytes(), supplied.as_bytes())
+    } else {
+        constant_time_equal(setting.value.as_bytes(), supplied_password.as_bytes())
+    };
+    if matched && !setting.value.starts_with("$argon2") {
+        let mut active = setting.into_active_model();
+        active.value = Set(crate::app_state::hash_admin_password(supplied_password));
+        if let Err(error) = active.update(db).await {
+            tracing::warn!(%error, "could not upgrade legacy admin password hash");
+        }
+    }
+    matched
+}
+
+async fn authenticate_user(
+    db: &sea_orm::DatabaseConnection, username: &str, password: &str,
+) -> Option<crate::models::user::Model> {
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let user = crate::models::user::Entity::find()
+        .filter(crate::models::user::Column::Username.eq(username))
+        .one(db)
+        .await
+        .ok()??;
+    let password_hash = user.password_hash.as_deref()?;
+    let parsed_hash = PasswordHash::new(password_hash).ok()?;
+    argon2::Argon2::default().verify_password(password.as_bytes(), &parsed_hash).ok()?;
+    Some(user)
+}
+
+pub(crate) fn hash_user_password(password: &str) -> String {
+    use argon2::password_hash::{PasswordHasher, SaltString};
+
+    let salt_bytes: [u8; 16] = rand::random();
+    let salt = SaltString::encode_b64(&salt_bytes).expect("encode random password salt");
+    argon2::Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .expect("hash user password")
+        .to_string()
 }
 
 fn constant_time_equal(expected: &[u8], supplied: &[u8]) -> bool {
@@ -297,4 +371,166 @@ fn oauth_unavailable() -> Response {
         Json(serde_json::json!({"error":"oauth_provider_unavailable"})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, routing::get};
+    use sea_orm::{ActiveModelTrait, Database, Set};
+    use tower::ServiceExt;
+
+    const USERNAME: &str = "regular-user";
+    const USER_PASSWORD: &str = "regular-user-password";
+    const ADMIN_PASSWORD: &str = "test-admin-password";
+
+    fn config(required: bool) -> AuthConfig {
+        AuthConfig {
+            required,
+            introspection_url: None,
+            client_id: None,
+            client_secret: None,
+            read_scope: "ferrisflow:read".to_owned(),
+            write_scope: "ferrisflow:write".to_owned(),
+            admin_scope: "ferrisflow:admin".to_owned(),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    async fn test_db(admin_hash: String) -> sea_orm::DatabaseConnection {
+        use migration::MigratorTrait;
+
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        migration::Migrator::up(&db, None).await.unwrap();
+        crate::models::app_setting::ActiveModel {
+            key: Set("auth.admin_password".to_owned()),
+            value: Set(admin_hash),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        crate::models::user::ActiveModel {
+            username: Set(USERNAME.to_owned()),
+            email: Set(None),
+            display_name: Set("Regular User".to_owned()),
+            password_hash: Set(Some(hash_user_password(USER_PASSWORD))),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        db
+    }
+
+    fn app(db: sea_orm::DatabaseConnection, required: bool) -> Router {
+        let protected_routes = Router::new()
+            .route("/", get(|| async { "login page" }))
+            .route("/api/health", get(|| async { StatusCode::OK }))
+            .route("/api/workflows", get(|| async { StatusCode::OK }))
+            .route("/api/auth/me", get(current_principal))
+            .route("/api/users", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                AuthMiddlewareState { config: config(required), db },
+                authorize_request,
+            ));
+        crate::with_security_headers(protected_routes)
+    }
+
+    async fn request(app: Router, path: &str, credentials: Option<(&str, &str)>) -> Response {
+        let mut request = Request::builder().uri(path);
+        if let Some((username, password)) = credentials {
+            let encoded = BASE64.encode(format!("{username}:{password}"));
+            request = request.header(axum::http::header::AUTHORIZATION, format!("Basic {encoded}"));
+        }
+        app.oneshot(request.body(Body::empty()).unwrap()).await.unwrap()
+    }
+
+    #[test]
+    fn authentication_is_required_unless_explicitly_disabled() {
+        assert!(authentication_required(None));
+        assert!(authentication_required(Some("true")));
+        assert!(authentication_required(Some("typo")));
+        assert!(!authentication_required(Some("false")));
+        assert!(!authentication_required(Some("0")));
+        assert!(!authentication_required(Some("no")));
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_api_is_denied_and_browser_headers_are_always_set() {
+        let db = test_db(crate::app_state::hash_admin_password(ADMIN_PASSWORD)).await;
+        let app = app(db, true);
+
+        let ui = request(app.clone(), "/", None).await;
+        assert_eq!(ui.status(), StatusCode::OK);
+        assert_security_headers(&ui);
+
+        let health = request(app.clone(), "/api/health", None).await;
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_security_headers(&health);
+
+        let protected = request(app, "/api/workflows", None).await;
+        assert_eq!(protected.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_security_headers(&protected);
+    }
+
+    #[tokio::test]
+    async fn regular_user_can_read_principal_but_cannot_administer_users() {
+        let db = test_db(crate::app_state::hash_admin_password(ADMIN_PASSWORD)).await;
+        let app = app(db, true);
+
+        let principal = request(app.clone(), "/api/auth/me", Some((USERNAME, USER_PASSWORD))).await;
+        assert_eq!(principal.status(), StatusCode::OK);
+
+        let admin_route = request(app, "/api/users", Some((USERNAME, USER_PASSWORD))).await;
+        assert_eq!(admin_route.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn only_valid_admin_credentials_can_access_user_administration() {
+        let db = test_db(crate::app_state::hash_admin_password(ADMIN_PASSWORD)).await;
+        let app = app(db, true);
+
+        let valid = request(app.clone(), "/api/users", Some(("admin", ADMIN_PASSWORD))).await;
+        assert_eq!(valid.status(), StatusCode::OK);
+
+        let invalid = request(app, "/api/users", Some(("admin", "wrong-password"))).await;
+        assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn successful_legacy_admin_login_upgrades_sha256_hash() {
+        use sea_orm::EntityTrait;
+        use sha2::{Digest, Sha256};
+
+        let digest = Sha256::digest(ADMIN_PASSWORD.as_bytes());
+        let legacy_hash = format!(
+            "sha256:{}",
+            digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        );
+        let db = test_db(legacy_hash).await;
+        let app = app(db.clone(), true);
+
+        let response = request(app, "/api/users", Some(("admin", ADMIN_PASSWORD))).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let setting = crate::models::app_setting::Entity::find_by_id("auth.admin_password")
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(setting.value.starts_with("$argon2"));
+        assert!(!setting.value.starts_with("sha256:"));
+    }
+
+    fn assert_security_headers(response: &Response) {
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["x-frame-options"], "DENY");
+        assert_eq!(
+            response.headers()["permissions-policy"],
+            "camera=(), microphone=(), geolocation=()"
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use crate::api_http as reqwest;
 use serde::{Deserialize, Serialize};
 
 use super::models::{DatabaseTables, ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
@@ -56,6 +57,13 @@ pub(super) struct WorkflowChatResponse {
     pub definition_json: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct AuthPrincipal {
+    pub subject: String,
+    pub username: Option<String>,
+    pub scopes: Vec<String>,
+}
+
 pub(super) fn api_url(path: &str) -> String {
     #[cfg(target_arch = "wasm32")]
     {
@@ -73,6 +81,26 @@ pub(super) fn api_url(path: &str) -> String {
             path
         )
     }
+}
+
+pub(crate) async fn current_principal() -> Result<AuthPrincipal, String> {
+    let response =
+        reqwest::get(api_url("/api/auth/me")).await.map_err(|error| error.to_string())?;
+    decode_response(response).await
+}
+
+pub(crate) async fn authenticate(
+    username: String, password: String,
+) -> Result<AuthPrincipal, String> {
+    let response = ::reqwest::Client::new()
+        .get(api_url("/api/auth/me"))
+        .basic_auth(&username, Some(&password))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let principal: AuthPrincipal = decode_response(response).await?;
+    reqwest::save_basic_auth(&username, &password);
+    Ok(principal)
 }
 
 pub(super) async fn list_ai_providers() -> Result<Vec<AiProvider>, String> {

@@ -10,6 +10,7 @@ mod m20261103_000007_plugins;
 mod m20261104_000008_standalone_pages;
 mod m20261117_000009_app_settings;
 mod m20261117_000010_users;
+mod m20261118_000011_user_passwords;
 mod migrations {
     automod::dir!("src/migrations");
 }
@@ -30,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261104_000008_standalone_pages::Migration),
             Box::new(m20261117_000009_app_settings::Migration),
             Box::new(m20261117_000010_users::Migration),
+            Box::new(m20261118_000011_user_passwords::Migration),
         ]
     }
 }

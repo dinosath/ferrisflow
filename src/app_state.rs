@@ -72,7 +72,7 @@ async fn ensure_admin_password(db: &DatabaseConnection) -> Option<String> {
         && let Some(record) = existing.as_ref()
         && !record.value.is_empty()
     {
-        if record.value.starts_with("sha256:") {
+        if record.value.starts_with("sha256:") || record.value.starts_with("$argon2") {
             return None;
         }
         // Upgrade a password written by an earlier build that stored it directly.
@@ -115,15 +115,14 @@ fn generate_admin_password() -> String {
 }
 
 pub(crate) fn hash_admin_password(password: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(password.as_bytes());
-    let mut encoded = String::with_capacity(7 + digest.len() * 2);
-    encoded.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write;
-        let _ = write!(encoded, "{byte:02x}");
-    }
-    encoded
+    use argon2::password_hash::{PasswordHasher, SaltString};
+
+    let salt_bytes: [u8; 16] = rand::random();
+    let salt = SaltString::encode_b64(&salt_bytes).expect("encode random admin password salt");
+    argon2::Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .expect("hash admin password")
+        .to_string()
 }
 
 async fn ensure_admin_user(db: &DatabaseConnection) {
