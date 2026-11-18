@@ -1,13 +1,10 @@
 [package]
-name = "ferris-workflow"
+name = "ferrisflow"
 version = "0.1.1"
 edition = "2024"
 license = "MIT"
 publish = false
 repository = "https://github.com/dinosath/ferrisflow"
-
-[lib]
-name = "ferrisflow"
 
 [package.metadata.dist]
 dist = true
