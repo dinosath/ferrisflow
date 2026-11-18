@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/dinosath/ferrisflow/compare/v0.1.0...v0.1.1) - 2026-11-09
+
+### Added
+
+- add pages primitive ([#4](https://github.com/dinosath/ferrisflow/pull/4))
+
 ## [0.1.0](https://github.com/dinosath/ferrisflow/releases/tag/v0.1.0) - 2026-11-05
 
 ### Added
