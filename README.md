@@ -105,6 +105,45 @@ PUT    /api/workflows/:id
 DELETE /api/workflows/:id
 ```
 
+### OAuth 2.0 API authentication
+
+The API can validate OAuth 2.0 bearer access tokens with an RFC 7662 token
+introspection endpoint. API authentication is required by default. Configure
+`OAUTH_INTROSPECTION_URL`, `OAUTH_CLIENT_ID`, and
+`OAUTH_CLIENT_SECRET`. The introspection client authenticates with HTTP Basic
+and sends each access token in the request body. Remote introspection URLs must
+use HTTPS; HTTP is accepted only for loopback development. Redirects are not
+followed. `/api/health` remains public.
+
+When authentication is enabled, requests without an active bearer token receive
+`401`; if the identity provider cannot be reached, requests receive `503`.
+Authenticated requests carry the provider's `sub`, optional `username`, and
+space-delimited `scope` values as an authorization principal. The
+`GET /api/auth/me` endpoint returns that principal. When authentication is
+required, GET-like requests require `ferrisflow:read`, while POST, PUT, PATCH,
+and DELETE require `ferrisflow:write`. Set `OAUTH_READ_SCOPE` or
+`OAUTH_WRITE_SCOPE` to match the names issued by your provider. Set
+`AUTH_REQUIRED=false` only for trusted local development or isolated tests;
+user administration remains admin-only in every mode.
+
+### User administration
+
+The service includes admin-only user CRUD endpoints: `GET` and `POST
+/api/users`, plus `GET`, `PUT`, and `DELETE /api/users/:id`. OAuth access tokens
+must include `ferrisflow:admin` (or the configured `OAUTH_ADMIN_SCOPE`). The
+local admin can use HTTP Basic authentication with username `admin` and the
+generated password. On first startup, Ferrisflow creates a 256-bit random
+password, saves an Argon2 verifier in the `app_settings` config table, and
+prints the password once as a warning. Legacy SHA-256 verifiers are upgraded
+to Argon2 after a successful login. Set `ADMIN_PASSWORD` to configure or
+rotate it explicitly; use a long random value for this override. The browser UI
+prompts for a username and password. Admin-created users can sign in when a
+password of at least 12 characters is supplied in the user create or update
+request; passwords are stored as Argon2 hashes. Existing profile-only users can
+be given a password through `PUT /api/users/:id`. User objects have `username`,
+optional `email`, and `display_name` fields. Use HTTPS when sending credentials
+over a network.
+
 ### Plugin-defined content types
 
 Content type screens, REST routes, and CRUD workflow definitions are declared
@@ -204,9 +243,9 @@ CI builds three images and publishes them to GitHub Container Registry on
 `main` and version tags:
 
 ```text
-ghcr.io/dinosath/ferris-workflow-server    # API server only
-ghcr.io/dinosath/ferris-workflow-frontend  # Static web app with /api proxy
-ghcr.io/dinosath/ferris-workflow-fullstack # Web app and API in one server
+ghcr.io/dinosath/ferrisflow           # API server only
+ghcr.io/dinosath/ferrisflow-frontend  # Static web app with /api proxy
+ghcr.io/dinosath/ferrisflow-fullstack # Web app and API in one server
 ```
 
 The server and fullstack images use `/data` for the default SQLite database;
@@ -220,7 +259,7 @@ CI run tests and builds the Rust server variants and packages the Helm chart as
 a downloadable workflow artifact.
 
 Tagged releases also include a cargo-dist Linux archive and shell installer.
-The archive contains the `ferris-workflow` server executable and the Dioxus
+The archive contains the `ferrisflow` server executable and the Dioxus
 frontend files in a sibling `public/` directory; run the executable from the
 extracted directory to serve both the UI and API. The release build targets
 `x86_64-unknown-linux-gnu`.
@@ -238,9 +277,9 @@ prereleases older than 30 days are removed weekly along with their tags.
 Build an individual image locally with BuildKit:
 
 ```sh
-docker build --target server -t ferris-workflow-server .
-docker build --target frontend -t ferris-workflow-frontend .
-docker build --target fullstack -t ferris-workflow-fullstack .
+docker build --target server -t ferrisflow .
+docker build --target frontend -t ferrisflow-frontend .
+docker build --target fullstack -t ferrisflow-fullstack .
 ```
 
 The server and fullstack targets use Docker Hardened Images when credentials are

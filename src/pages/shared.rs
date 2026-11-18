@@ -1,3 +1,4 @@
+use crate::api_http as reqwest;
 use crate::components::icons::Icon;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::script::{Script, component_script};
@@ -156,11 +157,16 @@ pub(crate) fn Shell(
     #[props(default)] on_breadcrumb_rename: Option<EventHandler<String>>, children: Element,
 ) -> Element {
     let mut tenant = use_context::<Signal<String>>();
+    let mut current_user = use_context::<Signal<Option<super::api::AuthPrincipal>>>();
     let mut tenant_menu = use_signal(|| false);
+    let mut user_menu = use_signal(|| false);
     let mut document_menu = use_signal(|| false);
     let mut breadcrumb_editing = use_signal(|| false);
     let mut breadcrumb_draft = use_signal(String::new);
     let plugin_menu_items = use_server_future(load_plugin_menu_items)?;
+    let signed_in_as = current_user()
+        .and_then(|principal| principal.username.or(Some(principal.subject)))
+        .unwrap_or_else(|| "User".to_owned());
     use_effect(move || {
         let _script = sidebar_resize_script::start();
     });
@@ -326,10 +332,40 @@ pub(crate) fn Shell(
                     }
                     div { class: "topbar-right",
                         if let Some(save) = breadcrumb_save { {save} }
-                        button { class: "topbar-user", r#type: "button", title: "User menu", aria_label: "User menu",
-                            span { class: "sidebar-user__avatar", "FF" }
-                            span { class: "topbar-user__copy", strong { "Ferris Flow" } small { "Local user" } }
-                            span { class: "sidebar-user__menu", Icon { name: "chevron-down" } }
+                        div { class: "topbar-user-menu-wrap",
+                            button {
+                                class: "topbar-user",
+                                r#type: "button",
+                                title: "Open account menu",
+                                aria_label: "Open account menu",
+                                aria_expanded: "{user_menu()}",
+                                aria_haspopup: "menu",
+                                onclick: move |_| user_menu.toggle(),
+                                span { class: "sidebar-user__avatar", "FF" }
+                                span { class: "topbar-user__copy", strong { "{signed_in_as}" } small { "Account menu" } }
+                                span { class: "sidebar-user__menu", Icon { name: "chevron-down" } }
+                            }
+                            if user_menu() {
+                                div { class: "topbar-user-menu", role: "menu",
+                                    div { class: "topbar-user-menu__identity",
+                                        strong { "{signed_in_as}" }
+                                        small { "Signed in to Ferrisflow" }
+                                    }
+                                    Link { class: "topbar-user-menu__item", role: "menuitem", to: Route::AccountPage {}, onclick: move |_| user_menu.set(false), "Account" }
+                                    div { class: "topbar-user-menu__divider" }
+                                    button {
+                                        class: "topbar-user-menu__item topbar-user-menu__item--danger",
+                                        r#type: "button",
+                                        role: "menuitem",
+                                        onclick: move |_| {
+                                            crate::api_http::clear_basic_auth();
+                                            current_user.set(None);
+                                            user_menu.set(false);
+                                        },
+                                        "Sign out"
+                                    }
+                                }
+                            }
                         }
                     }
                 }

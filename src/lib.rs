@@ -11,24 +11,42 @@ pub mod models {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod app_state;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod auth;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ows;
+#[cfg(not(target_arch = "wasm32"))]
+mod workflow_schedules;
 
 /// Build the axum [`Router`] with all routes and middleware.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_router(state: app_state::AppState) -> axum::Router {
-    use axum::http::HeaderValue;
-    use axum::http::header;
-    use tower_http::set_header::SetResponseHeaderLayer;
-
     let mut router = axum::Router::new();
     router = router.merge(controllers::routes());
+    router = router.merge(auth::routes());
     let connect_service = connect::service(controllers::routes().with_state(state.clone()));
     router = router.route_service(
         "/entities.v1.EntityService/Execute",
         connect_service.into_service::<axum::body::Body>(),
     );
-    // ─── Security headers (always applied) ──────────────────────────────
-    router = router
+    let router = router
+        .layer(axum::middleware::from_fn_with_state(
+            auth::AuthMiddlewareState { config: auth::AuthConfig::from_env(), db: state.db.clone() },
+            auth::authorize_request,
+        ))
+        .with_state(state);
+    with_security_headers(router)
+}
+
+/// Add baseline browser security headers to a router, including the fullstack UI.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn with_security_headers<S>(router: axum::Router<S>) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    use axum::http::{HeaderValue, header};
+    use tower_http::set_header::SetResponseHeaderLayer;
+
+    router
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
@@ -48,7 +66,9 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
         .layer(SetResponseHeaderLayer::overriding(
             header::HeaderName::from_static("referrer-policy"),
             HeaderValue::from_static("strict-origin-when-cross-origin"),
-        ));
-
-    router.with_state(state)
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
 }

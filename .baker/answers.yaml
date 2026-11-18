@@ -41,4 +41,4 @@ protocols:
 frontend: shadcn-admin-kit
 frontend_protocol: connect
 
-project_name: ferris-workflow
+project_name: ferrisflow

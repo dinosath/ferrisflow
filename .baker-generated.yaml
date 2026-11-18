@@ -51,7 +51,7 @@ answers:
   id_type: integer
   orm: seaorm
   project_edition: '2024'
-  project_name: ferris-workflow
+  project_name: ferrisflow
   project_version: 0.1.0
   protocols:
   - connect

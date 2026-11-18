@@ -1,9 +1,4 @@
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
-    Set,
-};
-
-const CONTENT_TYPES_PLUGIN_ID: &str = "ferrisflow.content-types";
+use sea_orm::{DatabaseConnection, EntityTrait, IntoActiveModel, Set};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,115 +17,138 @@ impl AppState {
             use migration::MigratorTrait;
             migration::Migrator::up(&db, None).await.expect("seaorm migrations failed");
         }
-        let mut manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../plugins/ferrisflow.content-types.json"))
-                .expect("built-in content types plugin definition must be valid JSON");
-        let workflows = manifest["workflows"]
-            .as_array_mut()
-            .expect("built-in content types plugin must declare workflow definitions");
-        let mut content_type_workflows = Vec::with_capacity(workflows.len());
-        for workflow in workflows {
-            let definition_json = crate::ows::normalize_ows_json(&workflow.to_string())
-                .expect("built-in plugin workflow must be valid OWS");
-            *workflow = serde_json::from_str(&definition_json)
-                .expect("normalized plugin workflow must be valid JSON");
-            let metadata = workflow["document"]["metadata"]["ferrisflow"].clone();
-            let name =
-                format!("Content types · {}", metadata["name"].as_str().unwrap_or("Workflow"));
-            let description = metadata["description"].as_str().unwrap_or_default().to_owned();
-            content_type_workflows.push((name, description, workflow.clone()));
+        if let Some(password) = ensure_admin_password(&db).await {
+            tracing::warn!(
+                admin_password = %password,
+                "Generated the initial admin password. Save it securely; it is stored in app config."
+            );
         }
-        manifest["builtin"] = serde_json::Value::Bool(true);
-        if let Some(row) = crate::models::plugin::Entity::find_by_id(CONTENT_TYPES_PLUGIN_ID)
-            .one(&db)
-            .await
-            .expect("could not check built-in content types plugin")
-        {
-            let mut plugin = row.into_active_model();
-            plugin.manifest_json = Set(manifest.to_string());
-            plugin.enabled = Set(true);
-            plugin.update(&db).await.expect("could not update built-in content types plugin");
-        } else {
-            crate::models::plugin::ActiveModel {
-                uid: Set(CONTENT_TYPES_PLUGIN_ID.to_owned()),
-                name: Set("Content types".to_owned()),
-                version: Set("1.0.0".to_owned()),
-                description: Set(Some(
-                    "Built-in content schema and CRUD workflow tools".to_owned(),
-                )),
-                manifest_json: Set(manifest.to_string()),
-                files_json: Set("{}".to_owned()),
-                source_url: Set(None),
-                enabled: Set(true),
-                ..Default::default()
-            }
-            .insert(&db)
-            .await
-            .expect("could not register built-in content types plugin");
-        }
-        for (name, description, definition) in content_type_workflows {
-            let definition_json = crate::ows::normalize_ows_json(&definition.to_string())
-                .expect("built-in content type workflow must be valid OWS");
-            let exists = crate::models::workflow::Entity::find()
-                .filter(crate::models::workflow::Column::Name.eq(name.clone()))
+        ensure_admin_user(&db).await;
+        // Built-in packages use the same resource lifecycle as imported packages.
+        for package in [include_str!("../plugins/ferrisflow.content-types.json")] {
+            let manifest: serde_json::Value =
+                serde_json::from_str(package).expect("invalid bundled plugin");
+            let uid = manifest["id"].as_str().expect("bundled plugin ID");
+            let existing = crate::models::plugin::Entity::find_by_id(uid)
                 .one(&db)
                 .await
-                .expect("could not check built-in content type workflows");
-            if let Some(row) = exists {
-                let mut workflow = row.into_active_model();
-                workflow.active = Set(true);
-                workflow.definition_json = Set(definition_json);
-                workflow.description = Set(Some(description));
-                workflow
-                    .update(&db)
-                    .await
-                    .expect("could not update built-in content type workflow");
-            } else {
-                crate::models::workflow::ActiveModel {
-                    active: Set(true),
-                    definition_json: Set(definition_json),
-                    description: Set(Some(description)),
-                    name: Set(name),
-                    version: Set(1),
-                    ..Default::default()
-                }
-                .insert(&db)
+                .expect("load bundled plugin");
+            let mut active = existing.map(IntoActiveModel::into_active_model).unwrap_or_default();
+            active.uid = Set(uid.to_owned());
+            active.name = Set(manifest["name"].as_str().unwrap().to_owned());
+            active.version = Set(manifest["version"].as_str().unwrap().to_owned());
+            active.description = Set(manifest["description"].as_str().map(str::to_owned));
+            active.manifest_json = Set(manifest.to_string());
+            active.files_json = Set("{}".to_owned());
+            active.enabled = Set(true);
+            crate::controllers::plugin_resources::persist(&db, active)
                 .await
-                .expect("could not register built-in content type workflow");
-            }
+                .expect("register bundled plugin");
         }
-        let saved_workflows = crate::models::workflow::Entity::find()
-            .all(&db)
+        crate::controllers::plugin_resources::reconcile(&db)
             .await
-            .expect("could not inspect saved workflows");
-        for row in saved_workflows {
-            let Ok(mut definition) =
-                serde_json::from_str::<serde_json::Value>(&row.definition_json)
-            else {
-                continue;
-            };
-            let uses_removed_content_crud =
-                definition.to_string().contains("ferrisflow.content_crud");
-            let Some(metadata) = definition
-                .get_mut("document")
-                .and_then(|document| document.get_mut("metadata"))
-                .and_then(serde_json::Value::as_object_mut)
-            else {
-                continue;
-            };
-            if metadata.remove("content_crud").is_none() && !uses_removed_content_crud {
-                continue;
-            }
-            let mut workflow = row.into_active_model();
-            workflow.active = Set(false);
-            workflow.definition_json = Set(definition.to_string());
-            workflow.update(&db).await.expect("could not disable legacy content CRUD workflow");
-        }
+            .expect("reconcile plugin resources");
         let state = Self { db };
         if let Err(error) = crate::db_triggers::reconcile(&state).await {
             tracing::warn!(%error, "could not install configured database triggers");
         }
         crate::db_triggers::spawn_listener(state.clone());
+        crate::workflow_schedules::spawn(state.clone());
         state
+    }
+}
+
+async fn ensure_admin_password(db: &DatabaseConnection) -> Option<String> {
+    use crate::models::app_setting;
+    use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
+
+    const ADMIN_PASSWORD_KEY: &str = "auth.admin_password";
+    let configured = std::env::var("ADMIN_PASSWORD").ok().filter(|value| !value.trim().is_empty());
+    let existing = app_setting::Entity::find_by_id(ADMIN_PASSWORD_KEY)
+        .one(db)
+        .await
+        .expect("load admin password config");
+    if configured.is_none()
+        && let Some(record) = existing.as_ref()
+        && !record.value.is_empty()
+    {
+        if record.value.starts_with("sha256:") || record.value.starts_with("$argon2") {
+            return None;
+        }
+        // Upgrade a password written by an earlier build that stored it directly.
+        let encoded = hash_admin_password(&record.value);
+        let mut active = record.clone().into_active_model();
+        active.value = Set(encoded);
+        active.update(db).await.expect("upgrade admin password config");
+        return None;
+    }
+
+    let password = configured.clone().unwrap_or_else(generate_admin_password);
+    let value = hash_admin_password(&password);
+    match existing {
+        Some(record) => {
+            let mut active = record.into_active_model();
+            active.value = Set(value);
+            active.update(db).await.expect("save admin password config");
+        }
+        None => {
+            (app_setting::ActiveModel {
+                key: Set(ADMIN_PASSWORD_KEY.to_owned()),
+                value: Set(value),
+            })
+            .insert(db)
+            .await
+            .expect("save admin password config");
+        }
+    }
+    configured.is_none().then_some(password)
+}
+
+fn generate_admin_password() -> String {
+    let bytes: [u8; 32] = rand::random();
+    let mut password = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(password, "{byte:02x}");
+    }
+    password
+}
+
+pub(crate) fn hash_admin_password(password: &str) -> String {
+    use argon2::password_hash::{PasswordHasher, SaltString};
+
+    let salt_bytes: [u8; 16] = rand::random();
+    let salt = SaltString::encode_b64(&salt_bytes).expect("encode random admin password salt");
+    argon2::Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .expect("hash admin password")
+        .to_string()
+}
+
+async fn ensure_admin_user(db: &DatabaseConnection) {
+    use crate::models::user;
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
+    if user::Entity::find()
+        .filter(user::Column::Username.eq("admin"))
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+    let now = chrono::Utc::now().naive_utc();
+    let admin = user::ActiveModel {
+        username: Set("admin".to_owned()),
+        email: Set(None),
+        display_name: Set("Administrator".to_owned()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    if let Err(error) = admin.insert(db).await {
+        tracing::warn!(%error, "could not create the default admin user record");
     }
 }

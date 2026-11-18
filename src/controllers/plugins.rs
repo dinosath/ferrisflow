@@ -17,7 +17,6 @@ use std::{
 };
 
 type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
-const BUILTIN_CONTENT_TYPES_PLUGIN: &str = "ferrisflow.content-types";
 fn error(status: StatusCode, message: impl ToString) -> (StatusCode, Json<Value>) {
     (status, Json(serde_json::json!({"error": message.to_string()})))
 }
@@ -197,7 +196,9 @@ fn validate_manifest(manifest: &Value, files: &BTreeMap<String, Value>) -> ApiRe
     if meta.get("name").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) {
         return Err(error(StatusCode::BAD_REQUEST, "Plugin name is required"));
     }
-    for key in ["workflows", "menuItems", "menu_items", "views", "pages"] {
+    for key in
+        ["workflows", "menuItems", "menu_items", "views", "pages", "resources", "resourceTypes"]
+    {
         if manifest.get(key).is_some_and(|v| !v.is_array()) {
             return Err(error(StatusCode::BAD_REQUEST, format!("'{key}' must be an array")));
         }
@@ -483,7 +484,9 @@ fn expand_package_resources(
     let root = manifest
         .as_object_mut()
         .ok_or_else(|| error(StatusCode::BAD_REQUEST, "Plugin manifest must be an object"))?;
-    for key in ["workflows", "menuItems", "menu_items", "views", "pages"] {
+    for key in
+        ["workflows", "menuItems", "menu_items", "views", "pages", "resources", "resourceTypes"]
+    {
         if let Some(items) = root.get(key).and_then(Value::as_array).cloned() {
             root.insert(key.to_owned(), Value::Array(expand_file_references(items, files)?));
         }
@@ -519,6 +522,9 @@ fn append_items(target: &mut Value, key: &str, source: Option<&Value>) {
 }
 
 fn merge_plugin_resources(target: &mut Value, source: &Value) {
+    append_items(target, "resources", source.get("resources"));
+    append_items(target, "resourceTypes", source.get("resourceTypes"));
+    append_items(target, "dependencies", source.get("dependencies"));
     append_items(target, "workflows", source.get("workflows"));
     append_items(target, "views", source.get("views"));
     append_items(target, "pages", source.get("pages"));
@@ -646,8 +652,16 @@ async fn create_plugin(
     State(state): State<AppState>, Json(input): Json<Value>,
 ) -> ApiResult<impl IntoResponse> {
     let package = resolve_plugin_dependencies(package_from_value(input)?).await?;
+    if plugin::Entity::find_by_id(&package.uid).one(&state.db).await.map_err(db_error)?.is_some() {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "Plugin already exists; update it to apply a new version",
+        ));
+    }
     let active = active_from_package(package, None)?;
-    let row = active.insert(&state.db).await.map_err(|e| error(StatusCode::CONFLICT, e))?;
+    let row = super::plugin_resources::persist(&state.db, active)
+        .await
+        .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     Ok((StatusCode::CREATED, Json(PluginResponse::try_from(row)?)))
 }
 async fn import_plugin_url(
@@ -659,8 +673,16 @@ async fn import_plugin_url(
         map.entry("source_url").or_insert(Value::String(raw_url.clone()));
     }
     let package = resolve_plugin_dependencies(package_from_value(value)?).await?;
+    if plugin::Entity::find_by_id(&package.uid).one(&state.db).await.map_err(db_error)?.is_some() {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "Plugin already exists; update it to apply a new version",
+        ));
+    }
     let active = active_from_package(package, Some(raw_url))?;
-    let row = active.insert(&state.db).await.map_err(|e| error(StatusCode::CONFLICT, e))?;
+    let row = super::plugin_resources::persist(&state.db, active)
+        .await
+        .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     Ok((StatusCode::CREATED, Json(PluginResponse::try_from(row)?)))
 }
 #[derive(Deserialize)]
@@ -677,10 +699,21 @@ async fn read_plugin(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "Plugin not found"))?;
     Ok(Json(PluginResponse::try_from(row)?))
 }
+async fn is_builtin(state: &AppState, uid: &str) -> ApiResult<bool> {
+    let row = plugin::Entity::find_by_id(uid)
+        .one(&state.db)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, "Plugin not found"))?;
+    let manifest: Value = serde_json::from_str(&row.manifest_json)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(manifest["builtin"] == true)
+}
+
 async fn update_plugin(
     State(state): State<AppState>, Path(uid): Path<String>, Json(input): Json<Value>,
 ) -> ApiResult<Json<PluginResponse>> {
-    if uid == BUILTIN_CONTENT_TYPES_PLUGIN {
+    if is_builtin(&state, &uid).await? {
         return Err(error(StatusCode::FORBIDDEN, "Built-in plugins cannot be edited"));
     }
     let package = resolve_plugin_dependencies(package_from_value(input)?).await?;
@@ -702,12 +735,16 @@ async fn update_plugin(
     row.files_json =
         Set(serde_json::to_string(&package.files).map_err(|e| error(StatusCode::BAD_REQUEST, e))?);
     row.updated_at = Set(chrono::Utc::now().naive_utc());
-    Ok(Json(PluginResponse::try_from(row.update(&state.db).await.map_err(db_error)?)?))
+    Ok(Json(PluginResponse::try_from(
+        super::plugin_resources::persist(&state.db, row)
+            .await
+            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
+    )?))
 }
 async fn delete_plugin(
     State(state): State<AppState>, Path(uid): Path<String>,
 ) -> ApiResult<StatusCode> {
-    if uid == BUILTIN_CONTENT_TYPES_PLUGIN {
+    if is_builtin(&state, &uid).await? {
         return Err(error(StatusCode::FORBIDDEN, "Built-in plugins cannot be deleted"));
     }
     if plugin::Entity::delete_by_id(uid).exec(&state.db).await.map_err(db_error)?.rows_affected == 0
@@ -723,7 +760,7 @@ struct EnabledInput {
 async fn set_enabled(
     State(state): State<AppState>, Path(uid): Path<String>, Json(input): Json<EnabledInput>,
 ) -> ApiResult<Json<PluginResponse>> {
-    if uid == BUILTIN_CONTENT_TYPES_PLUGIN && !input.enabled {
+    if !input.enabled && is_builtin(&state, &uid).await? {
         return Err(error(StatusCode::FORBIDDEN, "Built-in plugins cannot be disabled"));
     }
     let mut row = plugin::Entity::find_by_id(uid)

@@ -1,7 +1,9 @@
 mod ai_settings;
+mod account;
 pub(crate) mod api;
 mod content_views;
 mod data_tables;
+mod login;
 pub(crate) mod models;
 mod overview;
 mod ows_editor;
@@ -14,11 +16,13 @@ mod workflow_list;
 mod workspace_sections;
 
 pub(crate) use ai_settings::AiSettings;
+pub(crate) use account::AccountPage;
 pub(crate) use content_views::{EditPage, NewPage, Pages};
 pub(crate) use data_tables::DataTables;
+pub(crate) use login::LoginPage;
 pub(crate) use overview::Overview;
 pub(crate) use ows_editor::{OwsEditor, WorkflowChatMessage};
-pub(crate) use plugin_view::{PluginPagePage, PluginViewPage};
+pub(crate) use plugin_view::{ContentTypeViewer, NovelViewer, PluginPagePage, PluginViewPage};
 pub(crate) use plugins::{PluginDetailPage, Plugins};
 pub(crate) use workflow_detail::WorkflowDetail;
 pub(crate) use workflow_form::{EditWorkflow, NewWorkflow, ViewWorkflowExecution};
