@@ -27,6 +27,22 @@ cargo nextest run
 cargo nextest run --no-capture
 ```
 
+The stylesheet E2E tests run against the `ferrisflow-frontend:e2e` and
+`ferrisflow-fullstack:e2e` Docker images. Build both images before running them
+locally:
+
+```bash
+cd ..
+docker build --target frontend -t ferrisflow-frontend:e2e .
+docker build --target fullstack -t ferrisflow-fullstack:e2e .
+cargo test --manifest-path e2e/Cargo.toml --test web_styles
+```
+
+The frontend test opens the client image in Chromium and checks computed login
+screen styles. The fullstack test fetches the rendered page and verifies its
+stylesheet URLs return CSS with the app's login screen rules. CI builds and
+loads each image before running its corresponding test.
+
 After tests complete, run teardown manually:
 
 ```bash
