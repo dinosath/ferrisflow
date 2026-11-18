@@ -31,7 +31,7 @@ pub struct TestBrowser {
 
 impl TestBrowser {
     pub async fn new() -> Self {
-        let _ = playwright_rs::install_browsers().await;
+        let _ = playwright_rs::install_browsers(None).await;
         let playwright = Playwright::launch().await.expect("Failed to launch Playwright");
         let browser = playwright
             .chromium()

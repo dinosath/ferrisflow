@@ -147,6 +147,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=sha,prefix=sha-
+            type=raw,value=e2e,enable=${{ github.event_name == 'pull_request' }}
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
@@ -166,3 +167,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+          load: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install Rust toolchain for Docker image tests
+        if: github.event_name == 'pull_request' && (matrix.target == 'frontend' || matrix.target == 'fullstack')
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test frontend Docker image styling
+        if: github.event_name == 'pull_request' && matrix.target == 'frontend'
+        env:
+          FERRISFLOW_FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/ferrisflow-frontend:e2e
+        run: cargo test --manifest-path e2e/Cargo.toml --test web_styles frontend_client_docker_image_serves_stylesheets
+
+      - name: Test fullstack Docker image stylesheets
+        if: github.event_name == 'pull_request' && matrix.target == 'fullstack'
+        env:
+          FERRISFLOW_FULLSTACK_IMAGE: ghcr.io/${{ github.repository_owner }}/ferrisflow-fullstack:e2e
+        run: cargo test --manifest-path e2e/Cargo.toml --test web_styles fullstack_docker_image_serves_stylesheets
