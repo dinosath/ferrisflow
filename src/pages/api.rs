@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::models::{DatabaseTables, ExecutionRecord, ExecutionResult, Workflow, WorkflowPayload};
+use crate::api_http as reqwest;
 use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
@@ -56,15 +57,30 @@ pub(super) struct WorkflowChatResponse {
     pub definition_json: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(super) struct SyncSettings {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(super) struct HttpServerSettings {
+    pub enabled: bool,
+}
+
 pub(super) fn api_url(path: &str) -> String {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(feature = "local-app", not(target_arch = "wasm32")))]
+    {
+        path.to_owned()
+    }
+    #[cfg(all(not(feature = "local-app"), target_arch = "wasm32"))]
     {
         let origin = web_sys::window()
             .and_then(|window| window.location().origin().ok())
             .unwrap_or_default();
         format!("{origin}{path}")
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(feature = "local-app"), not(target_arch = "wasm32")))]
     {
         format!(
             "{}{}",
@@ -73,6 +89,42 @@ pub(super) fn api_url(path: &str) -> String {
             path
         )
     }
+}
+
+pub(super) async fn load_sync_settings() -> Result<SyncSettings, String> {
+    decode_response(reqwest::get(api_url("/api/settings/sync")).await.map_err(|e| e.to_string())?)
+        .await
+}
+
+pub(super) async fn save_sync_settings(settings: SyncSettings) -> Result<SyncSettings, String> {
+    let response = reqwest::Client::new()
+        .put(api_url("/api/settings/sync"))
+        .json(&settings)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    decode_response(response).await
+}
+
+pub(super) async fn load_http_server_settings() -> Result<HttpServerSettings, String> {
+    decode_response(
+        reqwest::get(api_url("/api/settings/http-server"))
+            .await
+            .map_err(|error| error.to_string())?,
+    )
+    .await
+}
+
+pub(super) async fn save_http_server_settings(
+    settings: HttpServerSettings,
+) -> Result<HttpServerSettings, String> {
+    let response = reqwest::Client::new()
+        .put(api_url("/api/settings/http-server"))
+        .json(&settings)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    decode_response(response).await
 }
 
 pub(super) async fn list_ai_providers() -> Result<Vec<AiProvider>, String> {

@@ -82,11 +82,18 @@ serial_test = "4"
 web-sys = { version = "0.3", features = ["Window", "Location"] }
 wasm-bindgen = "0.2"
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"
+robius-android-env = "0.2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+
 [features]
 default = ["web"]
 ui = ["dep:dioxus", "dep:dioxus-icons", "dep:ows-workflow-editor"]
 web = ["ui", "dioxus/web", "dioxus/fullstack"]
-mobile = ["ui", "dioxus/mobile"]
+mobile = ["ui", "local-app", "dioxus/mobile"]
+desktop = ["ui", "local-app", "dioxus/desktop"]
+local-app = []
 server = []
 fullstack = ["server", "ui", "dep:dioxus", "dioxus/fullstack"]
 api-server = ["server"]

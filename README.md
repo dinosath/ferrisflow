@@ -35,9 +35,14 @@ For a single process serving both the Dioxus UI and REST API, use the explicit
 cargo run --no-default-features --features fullstack
 ```
 
-For Android or desktop-native UI development, run the API server separately
-with `server`, then launch the UI with the appropriate Dioxus CLI target and
-the `mobile` feature.
+For Android and desktop-native UI development, launch the local app directly.
+Its workflows, database, and API calls run in-process without opening a network
+listener. The optional HTTP server can be enabled from **Settings → Sync → HTTP
+server**; it is disabled by default.
+
+```sh
+dx serve --platform desktop --no-default-features --features desktop
+```
 
 ## Run on Android
 
@@ -64,23 +69,16 @@ dx doctor
 adb devices
 ```
 
-Start the backend in one terminal:
+Serve the mobile app directly:
 
 ```sh
-mise run backend-dev
-```
-
-In another terminal, forward the backend port to the device and serve the mobile
-app:
-
-```sh
-adb reverse tcp:8080 tcp:8080
 dx serve --android --no-default-features --features mobile
 ```
 
-The port forward lets the Android app reach the backend at
-`http://127.0.0.1:8080`. The Android build uses the `mobile` Cargo feature;
-`--no-default-features` prevents the default web renderer from being enabled.
+The Android app uses its private application directory for the SQLite database.
+The `mobile` Cargo feature selects the local app runtime; `--no-default-features`
+prevents the default web renderer from being enabled. The optional HTTP server
+is off until enabled in **Settings → Sync → HTTP server**.
 
 The UI is written in Dioxus. Its page components live in `src/pages/`, and the
 app configuration and assets live in `Dioxus.toml` and `assets/`. The UI uses

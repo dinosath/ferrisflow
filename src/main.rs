@@ -3,6 +3,8 @@
 #[cfg(feature = "ui")]
 use dioxus::prelude::*;
 
+mod api_http;
+
 #[cfg(feature = "ui")]
 mod components;
 #[cfg(feature = "ui")]
@@ -10,9 +12,10 @@ mod pages;
 
 #[cfg(feature = "ui")]
 use pages::{
-    AiSettings, Credentials, DataTables, EditPage, EditWorkflow, Executions, NewPage, NewWorkflow,
-    ContentTypeViewer, NovelViewer, Overview, Pages, PluginDetailPage, PluginPagePage, PluginViewPage, Plugins, Variables,
-    ViewWorkflowExecution, WorkflowDetail, WorkflowList,
+    AiSettings, ContentTypeViewer, Credentials, DataTables, EditPage, EditWorkflow, Executions,
+    NewPage, NewWorkflow, NovelViewer, Overview, Pages, PluginDetailPage, PluginPagePage,
+    PluginViewPage, Plugins, SyncSettingsPage, Variables, ViewWorkflowExecution, WorkflowDetail,
+    WorkflowList,
 };
 
 #[cfg(any(feature = "api-server", all(feature = "server", not(feature = "ui"))))]
@@ -39,7 +42,8 @@ async fn main() {
     feature = "server",
     feature = "ui",
     not(feature = "api-server"),
-    not(target_arch = "wasm32")
+    not(target_arch = "wasm32"),
+    not(feature = "local-app")
 ))]
 fn main() {
     dioxus::serve(|| async move {
@@ -53,11 +57,110 @@ fn main() {
 
 #[cfg(all(
     feature = "ui",
+    feature = "local-app",
+    not(target_arch = "wasm32"),
+    not(feature = "api-server")
+))]
+fn main() {
+    #[cfg(all(feature = "mobile", target_os = "android"))]
+    initialize_android_database();
+    #[cfg(all(feature = "local-app", not(feature = "mobile")))]
+    initialize_desktop_database();
+    initialize_local_app();
+    dioxus::launch(app);
+}
+
+#[cfg(all(
+    feature = "ui",
     not(feature = "api-server"),
+    not(feature = "local-app"),
     any(not(feature = "server"), target_arch = "wasm32")
 ))]
 fn main() {
     dioxus::launch(app);
+}
+
+#[cfg(all(feature = "mobile", target_os = "android"))]
+fn initialize_android_database() {
+    use std::path::PathBuf;
+
+    use jni::objects::JString;
+
+    let data_dir = robius_android_env::with_activity(|env, activity| {
+        let files = env.call_method(activity, "getFilesDir", "()Ljava/io/File;", &[])?.l()?;
+        let absolute =
+            env.call_method(&files, "getAbsolutePath", "()Ljava/lang/String;", &[])?.l()?;
+        let path: String = env.get_string(&JString::from(absolute))?.into();
+        Ok::<_, jni::errors::Error>(PathBuf::from(path))
+    })
+    .expect("read Android application data directory")
+    .expect("resolve Android application data directory");
+    let database_path = data_dir.join("ferris-workflow.db");
+    let database_url = format!("sqlite://{}?mode=rwc", database_path.display());
+    unsafe {
+        std::env::set_var("DATABASE_URL", database_url);
+    }
+}
+
+#[cfg(all(feature = "local-app", not(feature = "mobile"), not(target_arch = "wasm32")))]
+fn initialize_desktop_database() {
+    use std::path::PathBuf;
+
+    if std::env::var_os("DATABASE_URL").is_some() {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    let data_dir = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        .join("Ferrisflow");
+    #[cfg(target_os = "macos")]
+    let data_dir = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        .join("Library/Application Support/Ferrisflow");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let data_dir = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        .join("ferrisflow");
+
+    std::fs::create_dir_all(&data_dir).expect("create Ferrisflow data directory");
+    let database_path = data_dir.join("ferris-workflow.db");
+    let database_url = format!("sqlite://{}?mode=rwc", database_path.display());
+    unsafe {
+        std::env::set_var("DATABASE_URL", database_url);
+    }
+}
+
+#[cfg(all(feature = "local-app", not(target_arch = "wasm32")))]
+fn initialize_local_app() {
+    use std::{sync::mpsc, time::Duration};
+
+    let (started, ready) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("ferrisflow-local-runtime".into())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("create local app runtime");
+            runtime.block_on(async move {
+                let state = ferrisflow::app_state::AppState::new().await;
+                let http_server_enabled = ferrisflow::http_server_enabled(&state).await;
+                let router = ferrisflow::build_router(state);
+                crate::api_http::install_router(router.clone())
+                    .expect("initialize in-process API router");
+                ferrisflow::configure_optional_http_server(router, http_server_enabled);
+                started.send(()).expect("notify local app startup");
+                loop {
+                    tokio::time::sleep(Duration::from_secs(3600)).await;
+                }
+            });
+        })
+        .expect("start local app runtime");
+    ready.recv().expect("local app failed to start");
 }
 
 #[cfg(all(not(feature = "ui"), not(feature = "server"), not(feature = "api-server")))]
@@ -122,4 +225,6 @@ enum Route {
     Variables {},
     #[route("/settings/ai")]
     AiSettings {},
+    #[route("/settings/sync")]
+    SyncSettingsPage {},
 }

@@ -11,3 +11,14 @@ title = "Ferrisflow"
 
 [web.watcher]
 watch_path = ["src", "assets"]
+
+[bundle]
+identifier = "com.ferrisflow.app"
+publisher = "Ferrisflow"
+
+[android]
+min_sdk = 24
+target_sdk = 35
+
+[android.application]
+uses_cleartext_traffic = true

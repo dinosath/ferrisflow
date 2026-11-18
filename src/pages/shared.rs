@@ -1,3 +1,4 @@
+use crate::api_http as reqwest;
 use crate::components::icons::Icon;
 use crate::components::ui::badge::{Badge, BadgeVariant};
 use crate::components::ui::script::{Script, component_script};
@@ -212,6 +213,7 @@ pub(crate) fn Shell(
                 }
                 SidebarSection { title: "Settings", nav_class: "sidebar-nav",
                     SidebarItem { to: Route::AiSettings {}, active: active == "settings_ai", icon: "sparkles", label: "AI integration" }
+                    SidebarItem { to: Route::SyncSettingsPage {}, active: active == "settings_sync", icon: "activity", label: "Sync" }
                 }
                 div { class: "sidebar-spacer" }
                 div {

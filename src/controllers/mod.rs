@@ -4,6 +4,7 @@ mod health;
 pub(crate) mod plugin_resources;
 pub mod plugins;
 pub(crate) mod primitives;
+pub(crate) mod settings;
 pub mod workflow;
 
 use crate::app_state::AppState;
@@ -21,6 +22,15 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/ai/providers/{id}",
             axum::routing::put(ai::update_provider).delete(ai::delete_provider),
+        )
+        .route(
+            "/api/settings/sync",
+            axum::routing::get(settings::read_sync_settings).put(settings::save_sync_settings),
+        )
+        .route(
+            "/api/settings/http-server",
+            axum::routing::get(settings::read_http_server_settings)
+                .put(settings::save_http_server_settings),
         )
         .merge(workflow::routes())
         .merge(plugins::routes())
