@@ -1,3 +1,4 @@
+use crate::api_http as reqwest;
 use crate::components::data_table::{DataTable, DataTableCell, DataTableRow};
 use crate::components::icons::Icon;
 use crate::components::ui::{

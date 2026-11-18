@@ -22,6 +22,8 @@ pub struct UserInput {
     #[serde(default)]
     pub email: Option<String>,
     pub display_name: String,
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,12 +68,13 @@ async fn read(
 async fn create(
     State(state): State<AppState>, Json(input): Json<UserInput>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (username, email, display_name) = validate(input)?;
+    let (username, email, display_name, password) = validate(input)?;
     let now = chrono::Utc::now().naive_utc();
     let active = user::ActiveModel {
         username: Set(username),
         email: Set(email),
         display_name: Set(display_name),
+        password_hash: Set(password.map(|password| crate::auth::hash_user_password(&password))),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -83,7 +86,7 @@ async fn create(
 async fn update(
     State(state): State<AppState>, Path(id): Path<i32>, Json(input): Json<UserInput>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let (username, email, display_name) = validate(input)?;
+    let (username, email, display_name, password) = validate(input)?;
     let user = user::Entity::find_by_id(id)
         .one(&state.db)
         .await
@@ -93,6 +96,9 @@ async fn update(
     active.username = Set(username);
     active.email = Set(email);
     active.display_name = Set(display_name);
+    if let Some(password) = password {
+        active.password_hash = Set(Some(crate::auth::hash_user_password(&password)));
+    }
     active.updated_at = Set(chrono::Utc::now().naive_utc());
     let updated = active.update(&state.db).await.map_err(ApiError::database)?;
     Ok(Json(updated.into()))
@@ -110,10 +116,13 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn validate(input: UserInput) -> Result<(String, Option<String>, String), ApiError> {
+fn validate(
+    input: UserInput,
+) -> Result<(String, Option<String>, String, Option<String>), ApiError> {
     let username = input.username.trim().to_owned();
     let display_name = input.display_name.trim().to_owned();
     let email = input.email.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+    let password = input.password.filter(|value| !value.is_empty());
     if username.is_empty() || username.len() > 128 {
         return Err(ApiError::bad_request("username must contain 1 to 128 characters"));
     }
@@ -123,7 +132,10 @@ fn validate(input: UserInput) -> Result<(String, Option<String>, String), ApiErr
     if email.as_ref().is_some_and(|value| value.len() > 320) {
         return Err(ApiError::bad_request("email must be at most 320 characters"));
     }
-    Ok((username, email, display_name))
+    if password.as_ref().is_some_and(|value| value.len() < 12) {
+        return Err(ApiError::bad_request("password must contain at least 12 characters"));
+    }
+    Ok((username, email, display_name, password))
 }
 
 struct ApiError(StatusCode, String);
