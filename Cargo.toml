@@ -26,6 +26,7 @@ strip = "none"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+strip = "none"
 
 [workspace]
 exclude = ["e2e"]

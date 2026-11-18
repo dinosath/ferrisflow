@@ -50,6 +50,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack false --profile web-release --no-default-features --features web \
+    && /app/scripts/check-client-styles.sh /app/target/dx/ferrisflow/release/web/public \
     && mkdir -p /app/out \
     && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/
 
@@ -65,7 +66,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target,sharing=locked \
     CARGO_TARGET_DIR=/app/target dx build --platform web --fullstack true --profile web-release --no-default-features --features web,fullstack \
-    && strip --strip-all /app/target/dx/ferrisflow/release/web/server \
+    && /app/scripts/check-fullstack-styles.sh /app/target/dx/ferrisflow/release/web/server /app/target/dx/ferrisflow/release/web/public \
     && mkdir -p /app/out/public /data \
     && cp /app/target/dx/ferrisflow/release/web/server /app/out/ferrisflow \
     && cp -a /app/target/dx/ferrisflow/release/web/public/. /app/out/public/
