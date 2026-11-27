@@ -129,13 +129,28 @@ user administration remains admin-only in every mode.
 ### OIDC browser sign-in
 
 Set `OIDC_ENABLED=true` to show the single sign-on button and enable the
-authorization-code callback. Ferrisflow discovers the provider from
-`OIDC_ISSUER`, uses PKCE, verifies the ID token signature, issuer, audience,
-expiry, and nonce, then keeps the access token in an HttpOnly cookie. API calls
-continue to validate that token through the introspection endpoint above.
-Configure `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the exact callback URI in
-`OIDC_REDIRECT_URI` (default `http://localhost:8080/auth/oidc/callback`).
+authorization-code callback. Ferrisflow uses the WebGates Axum OAuth2 gate for
+authorization code, PKCE, state cookies, and signed session cookies. It requests
+the `openid`, `profile`, and `email` scopes, then introspects the provider access
+token to map the subject and Ferrisflow scopes into a local session. Set
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the exact callback URI in
+`OIDC_REDIRECT_URI` (default `http://localhost:8080/auth/oidc/callback`). The
+authorization and token endpoints default to the standard
+`{OIDC_ISSUER}/protocol/openid-connect/{auth,token}` paths; set `OIDC_AUTH_URL`
+and `OIDC_TOKEN_URL` for providers that use different paths. API requests verify
+the signed local session cookie without contacting the identity provider.
 `OIDC_ENABLED` defaults to false. The existing password login remains available.
+
+WebGates requires a Ferrisflow session signing key pair when OIDC is enabled.
+Generate one for local development and keep both files private:
+
+```sh
+openssl ecparam -name secp384r1 -genkey -noout -out oidc-session-private.pem
+openssl pkey -in oidc-session-private.pem -pubout -out oidc-session-public.pem
+```
+
+The generated key files are ignored by Git. Use persistent keys in deployments
+so sessions remain verifiable across restarts and app instances.
 
 For a local FerrisKey provider, copy `.env.example` to `.env`, set the client
 secret after creating a client, then start FerrisKey and its PostgreSQL database:

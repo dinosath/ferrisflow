@@ -23,6 +23,15 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
     let mut router = axum::Router::new();
     router = router.merge(controllers::routes());
     router = router.merge(auth::routes());
+    let (oidc_codec, oidc_issuer) = match auth::oidc_router()
+        .expect("OIDC configuration must be valid when OIDC_ENABLED is true")
+    {
+        Some(oidc) => {
+            router = router.merge(oidc.router.with_state::<app_state::AppState>(()));
+            (Some(oidc.codec), Some(oidc.issuer))
+        }
+        None => (None, None),
+    };
     let connect_service = connect::service(controllers::routes().with_state(state.clone()));
     router = router.route_service(
         "/entities.v1.EntityService/Execute",
@@ -30,7 +39,12 @@ pub fn build_router(state: app_state::AppState) -> axum::Router {
     );
     let router = router
         .layer(axum::middleware::from_fn_with_state(
-            auth::AuthMiddlewareState { config: auth::AuthConfig::from_env(), db: state.db.clone() },
+            auth::AuthMiddlewareState {
+                config: auth::AuthConfig::from_env(),
+                db: state.db.clone(),
+                oidc_codec,
+                oidc_issuer,
+            },
             auth::authorize_request,
         ))
         .with_state(state);

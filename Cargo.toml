@@ -61,9 +61,10 @@ migration = { path = "migration" }
 sea-orm = { version = "2.0", features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "schema-sync"], default-features = false }
 rand = "0.9"
 sha2 = "0.10"
-hmac = "0.12"
-jsonwebtoken = "9"
 argon2 = "0.5"
+oauth2 = { version = "5", features = ["reqwest"] }
+webgates = { version = "1.2", default-features = false, features = ["codecs", "cookies", "oauth2"] }
+webgates-axum = "1.2"
 tower-http = { version = "0.6", features = ["set-header"] }
 validator = { version = "0.21", features = ["derive"] }
 serverless_workflow_core = { git = "https://github.com/open-workflow-specification/sdk-rust", rev = "12d7c5b2ef76bc5186f949e3a3d649db6a3f3ba5" }
