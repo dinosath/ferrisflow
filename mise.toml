@@ -15,6 +15,11 @@ node = "latest"
 pnpm = "latest"
 jq = "latest"
 
+[tasks.prek]
+description = "Run prek for Git hook setup and checks"
+raw_args = true
+run = "prek"
+
 [tasks.generate-local]
 description = "Generate the project files from local repo"
 run = "baker generate ../saas-templates . --answers-file .baker/answers.json --force --non-interactive --skip-confirms all"

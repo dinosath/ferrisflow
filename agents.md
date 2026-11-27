@@ -8,8 +8,8 @@ This repository contains Ferrisflow, a Rust and Dioxus workflow application.
 - Use a lowercase type such as `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, or `chore`, followed by a concise description.
 - Use `feat`, `fix`, `perf`, `refactor`, or `revert` for changes that should trigger release-plz.
 - Use the Git identity for the agent doing the work when creating commits: Codex commits as Codex, Claude as Claude, and so on. Do not use the repository owner's identity for agent-authored commits.
-- Validate Conventional Commit messages only with the Rust-based `convco` CLI; do not implement a custom checker. Install the tools with `mise install`, then install the repository hooks with [`prek`](https://github.com/j178/prek) using `prek install`.
-- Run the configured hooks manually with `prek run --all-files`.
+- Validate Conventional Commit messages only with the Rust-based `convco` CLI; do not implement a custom checker. Install the tools with `mise install`, then install Git hook shims with [`prek`](https://github.com/j178/prek) using `mise run prek install`.
+- Run the configured hooks manually with `mise run prek run --all-files`.
 - Do not create Bash or Python scripts. Use existing CLI tools or inline commands instead.
 
 ## Sidebar conventions
