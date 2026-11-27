@@ -380,14 +380,21 @@ async fn validate_oidc_id_token(
     {
         return Err("OIDC ID-token JWKS key is not valid for this signature".to_owned());
     }
+    let allowed_algorithms = match header.alg {
+        jsonwebtoken::Algorithm::RS256
+        | jsonwebtoken::Algorithm::RS384
+        | jsonwebtoken::Algorithm::RS512 => &[
+            jsonwebtoken::Algorithm::RS256,
+            jsonwebtoken::Algorithm::RS384,
+            jsonwebtoken::Algorithm::RS512,
+        ][..],
+        jsonwebtoken::Algorithm::ES256 | jsonwebtoken::Algorithm::ES384 => {
+            &[jsonwebtoken::Algorithm::ES256, jsonwebtoken::Algorithm::ES384][..]
+        }
+        _ => return Err("OIDC ID-token signing algorithm is not supported".to_owned()),
+    };
     let mut validation = Validation::new(header.alg);
-    validation.algorithms = vec![
-        jsonwebtoken::Algorithm::RS256,
-        jsonwebtoken::Algorithm::RS384,
-        jsonwebtoken::Algorithm::RS512,
-        jsonwebtoken::Algorithm::ES256,
-        jsonwebtoken::Algorithm::ES384,
-    ];
+    validation.algorithms = allowed_algorithms.to_vec();
     validation.set_issuer(&[issuer]);
     validation.set_audience(&[client_id]);
     validation.set_required_spec_claims(&["exp", "iss", "aud", "iat"]);
@@ -993,13 +1000,76 @@ fn oauth_unavailable() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, routing::get};
+    use axum::{
+        body::Body,
+        routing::{get, post},
+    };
     use sea_orm::{ActiveModelTrait, Database, Set};
     use tower::ServiceExt;
 
     const USERNAME: &str = "regular-user";
     const USER_PASSWORD: &str = "regular-user-password";
     const ADMIN_PASSWORD: &str = "test-admin-password";
+    // This private key is a test fixture and must never be used outside these tests.
+    const TEST_ID_TOKEN_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC6oFLwnLqrwGb5\nWtmviIRZGualzWW8ahcF0T8VBc68Eq3TUvA/rnp0cFMicjf6z6hH0IcK6iXlxRjm\nzi9du7sgGjCWAvTsN8K3pIyZHU41qCElZeZfqxzOsH+H5y5vjrACIy4mDLOhBuSW\nxKZtfk2pqZaili9eYzCNNJny8N26hKFcXTH1nzAnHDgTb9nAnEUtJ87KXzQQcOg9\nUDbPVRKvSk9oA29YT0rrOfG3ZxA/L2JXzpwmpXv6cMyJ7VxzVKfUQwvaoeZrSy9w\nldpI6+1wetXhJbAjs5K/dBHMpDq7MKjPzjoI9SWsTdMDsvFzOxGCZNfWixQdHO0a\nPBclknFfAgMBAAECggEADJUGPed1cmKchYZbyn+uJJRWJWGEYxuxF6srY3Phf0DU\n2eDrvV0V5mwPGjq01zB1uh5TrHCQjKuW/A5QBTPpXaJGY2/gc6ZCwAhCJT/11Xf3\n7mbTVpeQSzVYfOohA8HWPfoTybXJOoS6TpmWn3Ca64c5VoSJ4nMNOjWe8uNfMdXA\n9KM/Kkh5dF4U9BPBUKsO0ylugt7SRE/17ssXQXqJ/SyiMnQrDibkdhoZ9pDm60n3\nE5fQQ9bQYaD9jUW3YNDyA5oqRM3EeBS9aj7ubOfL4yLvmgCprKUm/1Q1BKuLzShE\nW10/iHQgRU/hH2soMXu6MDcVyVxUvJzMYUrTp5vQGQKBgQDgeE08hdoa0hAirwjZ\nQv2L6j03U5ZtSVpGkeYbG6zXA43OahUY1QT6pDDy+4A81oeG4AU5RDPEEZ966ND4\nmo6DgcvxTibEky38jyypHhwaVgSugQ63P3hm/xr9Q40QpAKaU5dL11ECzg8pKzym\npSe7KG8NNWWXW4my/zVGZ7U74wKBgQDU1zRlt4C69u5kUAqMuGX7IB8YXpAg/U5n\niaruVeYPZ8duz34H2JaIxLsBU9FRn1DJZER9iCdk/2iv1NoA9IZPoP7atbtHpVbH\nMGMA2v3ubgDkUYgc7aswIHlGNokvqV97ZAsxPQ7xOvSM92CJsJbP3qQ4q+ZWFtSd\nqiQRyDdlVQKBgQC9Wx6koLGlkHEGISvQw19JyVbMtlmeZZOfFnLLiWQbmablar3T\nTde+bAXS4/CA4eRAFfiyH2Of0dH8CCxIm3D/ZN4a+Hdhulq/xDPDkl/Yo5mdb8dv\nND6ofClTXsnAMOr1LvDhjIiNWjCV5SBr38SNcIWF2faSYSje88UIWHIdSwKBgGX5\n1jkF+r+ZoA6f6u4RS4tOkJd0d0nXE8G3zBX1Qg0PhBYrhA7uTvGokJDKP/gDhQl4\n6PfcTEOvu9DDAtCCV/e/A1x2xgxFw5YcMNMwGYorWnIKPlTd6q9cX76sUn5rgDv2\nawZkYsxhmtoPjElsOlXOLpCYi/ujZKtF4ZJDg4chAoGAUvuEsOA+MOqLARaCc2Oi\nZM1eB9a7CAnscjDUlMFm+UaE4cN1l0fOvH2lEHvsJur61CpxkG6Rlc9BakumbtZ7\nepxWRJmWkLvUO3GHTZoVJKNjQA+dQ9UQeS+zuZc0NJHXEKm6zrNZCtDbQrxnBLr0\nhrNaXGWT87lqFhKKm96pCVE=\n-----END PRIVATE KEY-----\n";
+    const TEST_ID_TOKEN_JWKS: &str = r#"{"keys":[{"kty":"RSA","kid":"test-key","use":"sig","alg":"RS256","n":"uqBS8Jy6q8Bm-VrZr4iEWRrmpc1lvGoXBdE_FQXOvBKt01LwP656dHBTInI3-s-oR9CHCuol5cUY5s4vXbu7IBowlgL07DfCt6SMmR1ONaghJWXmX6sczrB_h-cub46wAiMuJgyzoQbklsSmbX5NqamWopYvXmMwjTSZ8vDduoShXF0x9Z8wJxw4E2_ZwJxFLSfOyl80EHDoPVA2z1USr0pPaANvWE9K6znxt2cQPy9iV86cJqV7-nDMie1cc1Sn1EML2qHma0svcJXaSOvtcHrV4SWwI7OSv3QRzKQ6uzCoz846CPUlrE3TA7LxczsRgmTX1osUHRztGjwXJZJxXw","e":"AQAB"}]}"#;
+
+    #[derive(Serialize)]
+    struct TestIdTokenClaims {
+        iss: String,
+        sub: String,
+        aud: serde_json::Value,
+        exp: usize,
+        iat: usize,
+        nonce: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        azp: Option<String>,
+    }
+
+    async fn test_jwks_url() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let jwks: serde_json::Value = serde_json::from_str(TEST_ID_TOKEN_JWKS).unwrap();
+        let app = Router::new().route(
+            "/jwks",
+            get(move || {
+                let jwks = jwks.clone();
+                async move { Json(jwks) }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}/jwks"), server)
+    }
+
+    fn signed_test_id_token(
+        algorithm: jsonwebtoken::Algorithm, issuer: &str, audience: serde_json::Value, nonce: &str,
+        expires_at: usize, issued_at: usize, authorized_party: Option<&str>,
+    ) -> String {
+        let mut header = jsonwebtoken::Header::new(algorithm);
+        header.kid = Some("test-key".to_owned());
+        let claims = TestIdTokenClaims {
+            iss: issuer.to_owned(),
+            sub: "test-subject".to_owned(),
+            aud: audience,
+            exp: expires_at,
+            iat: issued_at,
+            nonce: nonce.to_owned(),
+            azp: authorized_party.map(str::to_owned),
+        };
+        jsonwebtoken::encode(
+            &header,
+            &claims,
+            &jsonwebtoken::EncodingKey::from_rsa_pem(TEST_ID_TOKEN_PRIVATE_KEY.as_bytes()).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn current_unix_time() -> usize {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+            as usize
+    }
 
     fn config(required: bool) -> AuthConfig {
         AuthConfig {
@@ -1086,6 +1156,322 @@ mod tests {
         assert!(safe_provider_url("http://localhost:3333/realms/team"));
         assert!(!safe_provider_url("http://id.example.com/realms/team"));
         assert!(!safe_provider_url("https://user:pass@id.example.com/realms/team"));
+    }
+
+    #[tokio::test]
+    async fn valid_signed_oidc_id_token_is_accepted_with_matching_issuer_audience_and_nonce() {
+        let (jwks_url, server) = test_jwks_url().await;
+        let now = current_unix_time();
+        let token = signed_test_id_token(
+            jsonwebtoken::Algorithm::RS256,
+            "https://issuer.example/realm",
+            serde_json::json!("ferrisflow-client"),
+            "login-nonce",
+            now + 300,
+            now,
+            None,
+        );
+
+        let claims = validate_oidc_id_token(
+            &reqwest::Client::new(),
+            &jwks_url,
+            "https://issuer.example/realm",
+            "ferrisflow-client",
+            "login-nonce",
+            &token,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(claims.sub, "test-subject");
+        assert_eq!(claims.iss, "https://issuer.example/realm");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn webgates_token_exchange_captures_the_id_token_and_login_nonce() {
+        use oauth2::TokenResponse;
+        use webgates::gate::oauth2::TokenExchanger;
+
+        let nonce = "nonce-bound-to-this-login";
+        let now = current_unix_time();
+        let id_token = signed_test_id_token(
+            jsonwebtoken::Algorithm::RS256,
+            "https://issuer.example/realm",
+            serde_json::json!("ferrisflow-client"),
+            nonce,
+            now + 300,
+            now,
+            None,
+        );
+        let expected_id_token = id_token.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/token",
+            post(move || {
+                let id_token = id_token.clone();
+                async move {
+                    Json(serde_json::json!({
+                        "access_token": "test-access-token",
+                        "token_type": "Bearer",
+                        "expires_in": 300,
+                        "id_token": id_token
+                    }))
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let flow = Arc::new(OidcFlowContext::default());
+        let verifier = "test-pkce-verifier-with-at-least-43-characters".to_owned();
+        flow.nonce_by_verifier.lock().unwrap().insert(verifier.clone(), nonce.to_owned());
+        let exchanger =
+            OidcTokenExchanger { http: reqwest::Client::new(), flow: Arc::clone(&flow) };
+
+        let response = exchanger
+            .exchange_code(webgates::gate::oauth2::TokenRequest {
+                code: "test-authorization-code".to_owned(),
+                pkce_verifier: verifier,
+                token_url: format!("http://{address}/token"),
+                client_id: "ferrisflow-client".to_owned(),
+                client_secret: Some("test-client-secret".to_owned()),
+                redirect_url: "http://localhost/callback".to_owned(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(response.access_token().secret(), "test-access-token");
+        let (captured_id_token, captured_nonce) =
+            flow.id_token_by_access_token.lock().unwrap().remove("test-access-token").unwrap();
+        assert_eq!(captured_id_token, expected_id_token);
+        assert_eq!(captured_nonce, nonce);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn oidc_middleware_sends_nonce_and_binds_it_to_the_callback_pkce_verifier() {
+        let flow = Arc::new(OidcFlowContext::default());
+        let callback_flow = Arc::clone(&flow);
+        let observed_callback_nonce = Arc::new(Mutex::new(None));
+        let nonce_observer = Arc::clone(&observed_callback_nonce);
+        let app = Router::new()
+            .route(
+                "/auth/oidc/login",
+                get(|| async { Redirect::to("https://issuer.example/authorize").into_response() }),
+            )
+            .route(
+                "/auth/oidc/callback",
+                get(move || {
+                    let flow = Arc::clone(&callback_flow);
+                    let nonce_observer = Arc::clone(&nonce_observer);
+                    async move {
+                        let nonce =
+                            flow.nonce_by_verifier.lock().unwrap().get("test-verifier").cloned();
+                        assert!(nonce.is_some());
+                        *nonce_observer.lock().unwrap() = nonce;
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .layer(from_fn_with_state(
+                OidcCookieMiddlewareState { flow: Arc::clone(&flow), secure: true },
+                oidc_cookie_middleware,
+            ));
+
+        let login_response = app
+            .clone()
+            .oneshot(Request::builder().uri("/auth/oidc/login").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(login_response.status(), StatusCode::SEE_OTHER);
+        let authorization_url =
+            url::Url::parse(login_response.headers()[header::LOCATION].to_str().unwrap()).unwrap();
+        let request_nonce = authorization_url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "nonce").then(|| value.into_owned()))
+            .unwrap();
+        let nonce_cookie = login_response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .find_map(|value| {
+                value
+                    .to_str()
+                    .ok()?
+                    .strip_prefix("ferrisflow_oidc_nonce=")
+                    .and_then(|cookie| cookie.split(';').next())
+                    .map(str::to_owned)
+            })
+            .unwrap();
+        assert_eq!(request_nonce, nonce_cookie);
+        assert!(login_response.headers().get_all(header::SET_COOKIE).iter().any(|value| {
+            value.to_str().unwrap().contains("HttpOnly; SameSite=Lax; Max-Age=300; Secure")
+        }));
+
+        let callback_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/callback")
+                    .header(
+                        header::COOKIE,
+                        format!(
+                            "ferrisflow_oidc_pkce=test-verifier; ferrisflow_oidc_nonce={nonce_cookie}"
+                        ),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(callback_response.status(), StatusCode::OK);
+        assert!(
+            callback_response
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .any(|value| value.to_str().unwrap().contains("ferrisflow_oidc_nonce=;"))
+        );
+        assert_eq!(observed_callback_nonce.lock().unwrap().as_deref(), Some(nonce_cookie.as_str()));
+        assert!(flow.nonce_by_verifier.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn oidc_id_token_requires_valid_issuer_audience_nonce_and_times() {
+        let (jwks_url, server) = test_jwks_url().await;
+        let now = current_unix_time();
+        let invalid_claims = [
+            (
+                "https://wrong-issuer.example",
+                serde_json::json!("ferrisflow-client"),
+                "login-nonce",
+                now + 300,
+                now,
+            ),
+            (
+                "https://issuer.example/realm",
+                serde_json::json!("another-client"),
+                "login-nonce",
+                now + 300,
+                now,
+            ),
+            (
+                "https://issuer.example/realm",
+                serde_json::json!("ferrisflow-client"),
+                "wrong-nonce",
+                now + 300,
+                now,
+            ),
+            (
+                "https://issuer.example/realm",
+                serde_json::json!("ferrisflow-client"),
+                "login-nonce",
+                now - 120,
+                now,
+            ),
+            (
+                "https://issuer.example/realm",
+                serde_json::json!("ferrisflow-client"),
+                "login-nonce",
+                now + 300,
+                now + 600,
+            ),
+        ];
+
+        for (issuer, audience, nonce, expires_at, issued_at) in invalid_claims {
+            let token = signed_test_id_token(
+                jsonwebtoken::Algorithm::RS256,
+                issuer,
+                audience,
+                nonce,
+                expires_at,
+                issued_at,
+                None,
+            );
+            assert!(
+                validate_oidc_id_token(
+                    &reqwest::Client::new(),
+                    &jwks_url,
+                    "https://issuer.example/realm",
+                    "ferrisflow-client",
+                    "login-nonce",
+                    &token,
+                )
+                .await
+                .is_err(),
+                "invalid ID-token claims should be rejected"
+            );
+        }
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn oidc_id_token_rejects_invalid_signatures_and_requires_azp_for_multiple_audiences() {
+        let (jwks_url, server) = test_jwks_url().await;
+        let now = current_unix_time();
+        let valid_multi_audience = signed_test_id_token(
+            jsonwebtoken::Algorithm::RS256,
+            "https://issuer.example/realm",
+            serde_json::json!(["ferrisflow-client", "another-client"]),
+            "login-nonce",
+            now + 300,
+            now,
+            Some("ferrisflow-client"),
+        );
+        assert!(
+            validate_oidc_id_token(
+                &reqwest::Client::new(),
+                &jwks_url,
+                "https://issuer.example/realm",
+                "ferrisflow-client",
+                "login-nonce",
+                &valid_multi_audience,
+            )
+            .await
+            .is_ok()
+        );
+
+        let missing_azp = signed_test_id_token(
+            jsonwebtoken::Algorithm::RS256,
+            "https://issuer.example/realm",
+            serde_json::json!(["ferrisflow-client", "another-client"]),
+            "login-nonce",
+            now + 300,
+            now,
+            None,
+        );
+        assert!(
+            validate_oidc_id_token(
+                &reqwest::Client::new(),
+                &jwks_url,
+                "https://issuer.example/realm",
+                "ferrisflow-client",
+                "login-nonce",
+                &missing_azp,
+            )
+            .await
+            .is_err()
+        );
+
+        let mut invalid_signature = valid_multi_audience;
+        let last = invalid_signature.pop().unwrap();
+        invalid_signature.push(if last == 'A' { 'B' } else { 'A' });
+        assert!(
+            validate_oidc_id_token(
+                &reqwest::Client::new(),
+                &jwks_url,
+                "https://issuer.example/realm",
+                "ferrisflow-client",
+                "login-nonce",
+                &invalid_signature,
+            )
+            .await
+            .is_err()
+        );
+
+        server.abort();
     }
 
     #[tokio::test]
