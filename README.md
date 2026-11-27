@@ -126,6 +126,45 @@ and DELETE require `ferrisflow:write`. Set `OAUTH_READ_SCOPE` or
 `AUTH_REQUIRED=false` only for trusted local development or isolated tests;
 user administration remains admin-only in every mode.
 
+### OIDC browser sign-in
+
+Set `OIDC_ENABLED=true` to show the single sign-on button and enable the
+authorization-code callback. Ferrisflow discovers the provider from
+`OIDC_ISSUER`, uses PKCE, verifies the ID token signature, issuer, audience,
+expiry, and nonce, then keeps the access token in an HttpOnly cookie. API calls
+continue to validate that token through the introspection endpoint above.
+Configure `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the exact callback URI in
+`OIDC_REDIRECT_URI` (default `http://localhost:8080/auth/oidc/callback`).
+`OIDC_ENABLED` defaults to false. The existing password login remains available.
+
+For a local FerrisKey provider, copy `.env.example` to `.env`, set the client
+secret after creating a client, then start FerrisKey and its PostgreSQL database:
+
+```sh
+docker compose --profile oidc up -d postgres ferriskey-postgres ferriskey-migrate ferriskey ferriskey-webapp
+```
+
+Podman users can run the same profile with `podman compose`. Open
+`http://localhost:5555` (admin/admin), create a `ferrisflow` realm, and create
+an enabled confidential OpenID Connect client with PKCE required and redirect
+URI `http://localhost:8080/auth/oidc/callback`. Assign the `openid`, `profile`,
+and `email` scopes, and create the Ferrisflow API scopes used by this service
+(`ferrisflow:read`, `ferrisflow:write`, and `ferrisflow:admin`) if the API is to
+enforce those permissions. Copy the client secret into both OIDC and OAuth
+client-secret variables in `.env` and set `OIDC_ENABLED=true`. Run the
+Ferrisflow web app on the host with the `.env` values exported:
+
+```sh
+set -a
+. ./.env
+set +a
+dx serve --fullstack --features fullstack
+```
+
+The provider issuer is `http://localhost:3333/realms/ferrisflow`; its introspection URL is
+`http://localhost:3333/realms/ferrisflow/protocol/openid-connect/token/introspect`.
+The default compose profile is unchanged and does not start FerrisKey.
+
 ### User administration
 
 The service includes admin-only user CRUD endpoints: `GET` and `POST

@@ -10,6 +10,18 @@ services:
       - 8080:8080
     environment:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8080/auth/oidc/callback}
+      - OAUTH_INTROSPECTION_URL=${OAUTH_INTROSPECTION_URL:-}
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:-}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:-}
+      - OAUTH_READ_SCOPE=${OAUTH_READ_SCOPE:-ferrisflow:read}
+      - OAUTH_WRITE_SCOPE=${OAUTH_WRITE_SCOPE:-ferrisflow:write}
+      - OAUTH_ADMIN_SCOPE=${OAUTH_ADMIN_SCOPE:-ferrisflow:admin}
     depends_on:
       - postgres
     profiles:
@@ -20,6 +32,18 @@ services:
       - 8080:8080
     environment:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8080/auth/oidc/callback}
+      - OAUTH_INTROSPECTION_URL=${OAUTH_INTROSPECTION_URL:-}
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:-}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:-}
+      - OAUTH_READ_SCOPE=${OAUTH_READ_SCOPE:-ferrisflow:read}
+      - OAUTH_WRITE_SCOPE=${OAUTH_WRITE_SCOPE:-ferrisflow:write}
+      - OAUTH_ADMIN_SCOPE=${OAUTH_ADMIN_SCOPE:-ferrisflow:admin}
     depends_on:
       - postgres
     profiles:
@@ -43,3 +67,66 @@ services:
       - ./mockserver:/config
     profiles:
       - mock
+
+  ferriskey-postgres:
+    image: postgres:18.2
+    environment:
+      POSTGRES_DB: ferriskey
+      POSTGRES_USER: ferriskey
+      POSTGRES_PASSWORD: ferriskey
+    volumes:
+      - ferriskey-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ferriskey -d ferriskey"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles:
+      - oidc
+
+  ferriskey-migrate:
+    image: ghcr.io/ferriskey/ferriskey-api:latest
+    entrypoint: ["sqlx"]
+    command: ["migrate", "run", "--source", "/usr/local/src/ferriskey/migrations"]
+    environment:
+      DATABASE_URL: postgres://ferriskey:ferriskey@ferriskey-postgres/ferriskey
+    depends_on:
+      ferriskey-postgres:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - oidc
+
+  ferriskey:
+    image: ghcr.io/ferriskey/ferriskey-api:latest
+    environment:
+      DATABASE_HOST: ferriskey-postgres
+      DATABASE_NAME: ferriskey
+      DATABASE_USER: ferriskey
+      DATABASE_PASSWORD: ferriskey
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin
+      ADMIN_EMAIL: admin@localhost
+      ALLOWED_ORIGINS: http://localhost:5555
+      WEBAPP_URL: http://localhost:5555
+    ports:
+      - "3333:3333"
+    depends_on:
+      ferriskey-migrate:
+        condition: service_completed_successfully
+    profiles:
+      - oidc
+
+  ferriskey-webapp:
+    image: ghcr.io/ferriskey/ferriskey-webapp:latest
+    environment:
+      API_URL: http://localhost:3333
+    ports:
+      - "5555:80"
+    depends_on:
+      - ferriskey
+    profiles:
+      - oidc
+
+volumes:
+  ferriskey-data:

@@ -61,6 +61,8 @@ migration = { path = "migration" }
 sea-orm = { version = "2.0", features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "schema-sync"], default-features = false }
 rand = "0.9"
 sha2 = "0.10"
+hmac = "0.12"
+jsonwebtoken = "9"
 argon2 = "0.5"
 tower-http = { version = "0.6", features = ["set-header"] }
 validator = { version = "0.21", features = ["derive"] }

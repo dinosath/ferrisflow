@@ -1,4 +1,4 @@
-//! Optional OAuth 2.0 bearer-token authentication for the HTTP API.
+//! OAuth 2.0 bearer-token authentication and optional OIDC browser sign-in.
 //!
 //! The resource server validates access tokens through an OAuth 2.0 token
 //! introspection endpoint (RFC 7662). Configuration is read from the process
@@ -7,15 +7,21 @@
 
 use axum::{
     Json, Router,
-    extract::State,
-    http::{Request, StatusCode},
+    extract::{Query, State},
+    http::{HeaderMap, HeaderValue, Request, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
+};
+use hmac::{Hmac, Mac};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -115,7 +121,386 @@ struct IntrospectionResponse {
 }
 
 pub fn routes() -> Router<crate::app_state::AppState> {
-    Router::new().route("/api/auth/me", get(current_principal))
+    Router::new()
+        .route("/api/auth/me", get(current_principal))
+        .route("/api/auth/config", get(auth_config))
+        .route("/auth/oidc/login", get(oidc_login))
+        .route("/auth/oidc/callback", get(oidc_callback))
+        .route("/auth/oidc/logout", get(oidc_logout))
+}
+
+#[derive(Serialize)]
+struct AuthUiConfig {
+    oidc_enabled: bool,
+}
+
+async fn auth_config() -> Json<AuthUiConfig> {
+    Json(AuthUiConfig { oidc_enabled: oidc_enabled() })
+}
+
+fn oidc_enabled() -> bool {
+    std::env::var("OIDC_ENABLED")
+        .ok()
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+}
+
+#[derive(Clone)]
+struct OidcSettings {
+    issuer: String,
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+}
+
+impl OidcSettings {
+    fn from_env() -> Result<Self, Response> {
+        let value = |name: &str| std::env::var(name).ok().filter(|value| !value.trim().is_empty());
+        let Some(issuer) = value("OIDC_ISSUER") else {
+            return Err(oidc_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC_ISSUER is not configured",
+            ));
+        };
+        let Some(client_id) = value("OIDC_CLIENT_ID") else {
+            return Err(oidc_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC_CLIENT_ID is not configured",
+            ));
+        };
+        let Some(client_secret) = value("OIDC_CLIENT_SECRET") else {
+            return Err(oidc_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC_CLIENT_SECRET is not configured",
+            ));
+        };
+        let redirect_uri = value("OIDC_REDIRECT_URI")
+            .unwrap_or_else(|| "http://localhost:8080/auth/oidc/callback".to_owned());
+        if !safe_provider_url(&issuer) || !safe_provider_url(&redirect_uri) {
+            return Err(oidc_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC URLs must use HTTPS (HTTP is allowed on loopback)",
+            ));
+        }
+        Ok(Self {
+            issuer: issuer.trim_end_matches('/').to_owned(),
+            client_id,
+            client_secret,
+            redirect_uri,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct OidcMetadata {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OidcFlow {
+    state: String,
+    nonce: String,
+    verifier: String,
+    expires_at: u64,
+}
+
+#[derive(Deserialize)]
+struct OidcCallback {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OidcTokens {
+    access_token: String,
+    id_token: String,
+    expires_in: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdClaims {
+    iss: String,
+    sub: String,
+    nonce: String,
+    exp: usize,
+}
+
+async fn oidc_login() -> Response {
+    if !oidc_enabled() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let settings = match OidcSettings::from_env() {
+        Ok(settings) => settings,
+        Err(response) => return response,
+    };
+    let metadata = match oidc_metadata(&settings).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let state = random_url_token();
+    let nonce = random_url_token();
+    let verifier = random_url_token();
+    let challenge = URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes()));
+    let flow = OidcFlow { state, nonce, verifier, expires_at: unix_time() + 300 };
+    let cookie = match sign_flow(&settings.client_secret, &flow) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let mut url = match url::Url::parse(&metadata.authorization_endpoint) {
+        Ok(url) => url,
+        Err(_) => {
+            return oidc_error(StatusCode::BAD_GATEWAY, "Invalid OIDC authorization endpoint");
+        }
+    };
+    url.query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", &settings.client_id)
+        .append_pair("redirect_uri", &settings.redirect_uri)
+        .append_pair("scope", "openid profile email")
+        .append_pair("state", &flow.state)
+        .append_pair("nonce", &flow.nonce)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256");
+    let mut response = Redirect::to(url.as_str()).into_response();
+    set_cookie(
+        &mut response,
+        &format!(
+            "ferrisflow_oidc_flow={cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300{}",
+            secure_cookie(&settings.redirect_uri)
+        ),
+    );
+    response
+}
+
+async fn oidc_callback(headers: HeaderMap, Query(query): Query<OidcCallback>) -> Response {
+    if !oidc_enabled() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if query.error.is_some() {
+        return oidc_error(StatusCode::UNAUTHORIZED, "Identity provider declined sign-in");
+    }
+    let settings = match OidcSettings::from_env() {
+        Ok(settings) => settings,
+        Err(response) => return response,
+    };
+    let flow_cookie = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|header| header.to_str().ok())
+        .and_then(|value| {
+            value.split(';').find_map(|part| part.trim().strip_prefix("ferrisflow_oidc_flow="))
+        });
+    let Some(flow_cookie) = flow_cookie else {
+        return oidc_error(StatusCode::BAD_REQUEST, "Missing OIDC login state");
+    };
+    let flow = match verify_flow(&settings.client_secret, flow_cookie) {
+        Ok(flow) => flow,
+        Err(response) => return response,
+    };
+    if flow.expires_at < unix_time() || query.state.as_deref() != Some(&flow.state) {
+        return oidc_error(StatusCode::BAD_REQUEST, "OIDC login state did not match");
+    }
+    let Some(code) = query.code else {
+        return oidc_error(StatusCode::BAD_REQUEST, "Missing OIDC authorization code");
+    };
+    let metadata = match oidc_metadata(&settings).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build();
+    let Ok(http) = http else { return oauth_unavailable() };
+    let token_result = match http
+        .post(&metadata.token_endpoint)
+        .basic_auth(&settings.client_id, Some(&settings.client_secret))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", settings.redirect_uri.as_str()),
+            ("code_verifier", flow.verifier.as_str()),
+        ])
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response.json::<OidcTokens>().await,
+        _ => return oidc_error(StatusCode::BAD_GATEWAY, "OIDC token exchange failed"),
+    };
+    let tokens = match token_result {
+        Ok(tokens) => tokens,
+        Err(_) => return oidc_error(StatusCode::BAD_GATEWAY, "OIDC token response was invalid"),
+    };
+    if let Err(response) =
+        validate_id_token(&http, &metadata, &settings, &tokens.id_token, &flow.nonce).await
+    {
+        return response;
+    }
+    let mut response = Redirect::to("/").into_response();
+    set_cookie(
+        &mut response,
+        &format!(
+            "ferrisflow_oidc={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
+            tokens.access_token,
+            tokens.expires_in.unwrap_or(3600),
+            secure_cookie(&settings.redirect_uri)
+        ),
+    );
+    set_cookie(
+        &mut response,
+        &format!(
+            "ferrisflow_oidc_flow=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+            secure_cookie(&settings.redirect_uri)
+        ),
+    );
+    response
+}
+
+async fn oidc_logout() -> Response {
+    let secure =
+        std::env::var("OIDC_REDIRECT_URI").ok().is_some_and(|uri| uri.starts_with("https://"));
+    let mut response = Redirect::to("/").into_response();
+    set_cookie(
+        &mut response,
+        &format!(
+            "ferrisflow_oidc=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+            if secure { "; Secure" } else { "" }
+        ),
+    );
+    response
+}
+
+async fn oidc_metadata(settings: &OidcSettings) -> Result<OidcMetadata, Response> {
+    let discovery = format!("{}/.well-known/openid-configuration", settings.issuer);
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| oauth_unavailable())?
+        .get(discovery)
+        .send()
+        .await
+        .map_err(|_| oauth_unavailable())?;
+    if !response.status().is_success() {
+        return Err(oauth_unavailable());
+    }
+    let metadata = response.json::<OidcMetadata>().await.map_err(|_| oauth_unavailable())?;
+    if metadata.issuer != settings.issuer
+        || !safe_provider_url(&metadata.authorization_endpoint)
+        || !safe_provider_url(&metadata.token_endpoint)
+        || !safe_provider_url(&metadata.jwks_uri)
+    {
+        return Err(oidc_error(
+            StatusCode::BAD_GATEWAY,
+            "OIDC provider metadata did not match the configured issuer",
+        ));
+    }
+    Ok(metadata)
+}
+
+async fn validate_id_token(
+    http: &reqwest::Client, metadata: &OidcMetadata, settings: &OidcSettings, token: &str,
+    nonce: &str,
+) -> Result<(), Response> {
+    let response = http.get(&metadata.jwks_uri).send().await.map_err(|_| oauth_unavailable())?;
+    if !response.status().is_success() {
+        return Err(oauth_unavailable());
+    }
+    let jwks: jsonwebtoken::jwk::JwkSet = response
+        .json()
+        .await
+        .map_err(|_| oidc_error(StatusCode::BAD_GATEWAY, "OIDC key set was invalid"))?;
+    let header = jsonwebtoken::decode_header(token)
+        .map_err(|_| oidc_error(StatusCode::UNAUTHORIZED, "OIDC ID token was invalid"))?;
+    let key = jwks.find(header.kid.as_deref().unwrap_or_default()).ok_or_else(|| {
+        oidc_error(StatusCode::UNAUTHORIZED, "OIDC ID token signing key was not found")
+    })?;
+    let algorithm = header.alg;
+    let mut validation = Validation::new(algorithm);
+    validation.set_issuer(&[&metadata.issuer]);
+    validation.set_audience(&[&settings.client_id]);
+    let claims = decode::<IdClaims>(
+        token,
+        &DecodingKey::from_jwk(key)
+            .map_err(|_| oidc_error(StatusCode::UNAUTHORIZED, "OIDC signing key was invalid"))?,
+        &validation,
+    )
+    .map_err(|_| oidc_error(StatusCode::UNAUTHORIZED, "OIDC ID token validation failed"))?
+    .claims;
+    if claims.iss != metadata.issuer
+        || claims.nonce != nonce
+        || claims.sub.is_empty()
+        || claims.exp as u64 <= unix_time()
+    {
+        return Err(oidc_error(StatusCode::UNAUTHORIZED, "OIDC ID token claims were invalid"));
+    }
+    Ok(())
+}
+
+fn safe_provider_url(value: &str) -> bool {
+    url::Url::parse(value).ok().is_some_and(|url| {
+        url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+            && (url.scheme() == "https" && url.host().is_some()
+                || url.scheme() == "http"
+                    && url.host_str().is_some_and(|host| {
+                        host.eq_ignore_ascii_case("localhost")
+                            || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+                    }))
+    })
+}
+
+fn random_url_token() -> String {
+    let bytes: [u8; 32] = rand::random();
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+fn unix_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs())
+}
+fn secure_cookie(uri: &str) -> &'static str {
+    if uri.starts_with("https://") { "; Secure" } else { "" }
+}
+
+fn sign_flow(secret: &str, flow: &OidcFlow) -> Result<String, Response> {
+    let payload = serde_json::to_vec(flow).map_err(|_| oauth_unavailable())?;
+    let encoded = URL_SAFE_NO_PAD.encode(payload);
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| oauth_unavailable())?;
+    mac.update(encoded.as_bytes());
+    Ok(format!("{encoded}.{}", URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())))
+}
+
+fn verify_flow(secret: &str, value: &str) -> Result<OidcFlow, Response> {
+    let (payload, signature) = value
+        .split_once('.')
+        .ok_or_else(|| oidc_error(StatusCode::BAD_REQUEST, "OIDC login state was invalid"))?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature)
+        .map_err(|_| oidc_error(StatusCode::BAD_REQUEST, "OIDC login state was invalid"))?;
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| oauth_unavailable())?;
+    mac.update(payload.as_bytes());
+    mac.verify_slice(&signature)
+        .map_err(|_| oidc_error(StatusCode::BAD_REQUEST, "OIDC login state was invalid"))?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| oidc_error(StatusCode::BAD_REQUEST, "OIDC login state was invalid"))?;
+    serde_json::from_slice(&payload)
+        .map_err(|_| oidc_error(StatusCode::BAD_REQUEST, "OIDC login state was invalid"))
+}
+
+fn set_cookie(response: &mut Response, cookie: &str) {
+    if let Ok(value) = HeaderValue::from_str(cookie) {
+        response.headers_mut().append(axum::http::header::SET_COOKIE, value);
+    }
+}
+fn oidc_error(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({"error": message}))).into_response()
 }
 
 async fn current_principal(
@@ -136,7 +521,10 @@ pub async fn authorize_request(
 ) -> Response {
     let config = &state.config;
     let path = request.uri().path();
-    if path == "/api/health" || !(path.starts_with("/api/") || path.starts_with("/entities.v1.")) {
+    if path == "/api/health"
+        || path == "/api/auth/config"
+        || !(path.starts_with("/api/") || path.starts_with("/entities.v1."))
+    {
         return next.run(request).await;
     }
     let admin_endpoint = path == "/api/users" || path.starts_with("/api/users/");
@@ -199,7 +587,18 @@ pub async fn authorize_request(
         }
     }
 
-    let token = auth_header.and_then(|value| value.strip_prefix("Bearer "));
+    let cookie_token = request
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|header| header.to_str().ok())
+        .and_then(|value| {
+            value.split(';').find_map(|part| part.trim().strip_prefix("ferrisflow_oidc="))
+        })
+        .filter(|token| !token.is_empty());
+    let token = auth_header
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
+        .or(cookie_token);
     let Some(token) = token.filter(|token| !token.is_empty()) else {
         if !admin_endpoint && !config.required {
             return next.run(request).await;
@@ -456,6 +855,23 @@ mod tests {
         assert!(!authentication_required(Some("false")));
         assert!(!authentication_required(Some("0")));
         assert!(!authentication_required(Some("no")));
+    }
+
+    #[test]
+    fn oidc_flow_cookie_is_signed_and_provider_urls_are_restricted() {
+        let flow = OidcFlow {
+            state: "state".to_owned(),
+            nonce: "nonce".to_owned(),
+            verifier: "verifier".to_owned(),
+            expires_at: unix_time() + 300,
+        };
+        let cookie = sign_flow("client-secret", &flow).expect("sign state cookie");
+        assert_eq!(verify_flow("client-secret", &cookie).unwrap().state, flow.state);
+        assert!(verify_flow("wrong-secret", &cookie).is_err());
+        assert!(safe_provider_url("https://id.example.com/realms/team"));
+        assert!(safe_provider_url("http://localhost:3333/realms/team"));
+        assert!(!safe_provider_url("http://id.example.com/realms/team"));
+        assert!(!safe_provider_url("https://user:pass@id.example.com/realms/team"));
     }
 
     #[tokio::test]
