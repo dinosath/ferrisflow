@@ -3256,6 +3256,7 @@ dependencies = [
  "connectrpc-build",
  "dioxus",
  "dioxus-icons",
+ "jsonwebtoken",
  "migration",
  "oauth2",
  "ows",

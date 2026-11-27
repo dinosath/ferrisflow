@@ -131,13 +131,17 @@ user administration remains admin-only in every mode.
 Set `OIDC_ENABLED=true` to show the single sign-on button and enable the
 authorization-code callback. Ferrisflow uses the WebGates Axum OAuth2 gate for
 authorization code, PKCE, state cookies, and signed session cookies. It requests
-the `openid`, `profile`, and `email` scopes, then introspects the provider access
-token to map the subject and Ferrisflow scopes into a local session. Set
+the `openid`, `profile`, and `email` scopes. Ferrisflow validates the returned ID
+token's signature, issuer, audience, expiry, and per-login nonce against the
+provider's JWKS, then introspects the access token and requires its subject to
+match before mapping Ferrisflow scopes into a local session. Set
 `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the exact callback URI in
 `OIDC_REDIRECT_URI` (default `http://localhost:8080/auth/oidc/callback`). The
 authorization and token endpoints default to the standard
 `{OIDC_ISSUER}/protocol/openid-connect/{auth,token}` paths; set `OIDC_AUTH_URL`
-and `OIDC_TOKEN_URL` for providers that use different paths. API requests verify
+and `OIDC_TOKEN_URL` for providers that use different paths. The signing-key
+endpoint defaults to `{OIDC_ISSUER}/protocol/openid-connect/jwks.json`; set
+`OIDC_JWKS_URL` for providers that use a different JWKS path. API requests verify
 the signed local session cookie without contacting the identity provider.
 `OIDC_ENABLED` defaults to false. The existing password login remains available.
 

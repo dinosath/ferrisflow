@@ -8,15 +8,25 @@
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderValue, Request, StatusCode},
-    middleware::Next,
+    http::{HeaderValue, Request, StatusCode, header},
+    middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Redirect, Response},
     routing::get,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
+};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 type OidcAccount = webgates::accounts::Account<webgates::roles::Role, webgates::groups::Group>;
 type OidcClaims = webgates::codecs::jwt::JwtClaims<OidcAccount>;
@@ -156,6 +166,290 @@ pub(crate) struct OidcRouter {
     pub issuer: String,
 }
 
+#[derive(Default)]
+struct OidcFlowContext {
+    nonce_by_verifier: Mutex<HashMap<String, String>>,
+    id_token_by_access_token: Mutex<HashMap<String, (String, String)>>,
+}
+
+#[derive(Clone)]
+struct OidcCookieMiddlewareState {
+    flow: Arc<OidcFlowContext>,
+    secure: bool,
+}
+
+struct OidcTokenExchanger {
+    http: reqwest::Client,
+    flow: Arc<OidcFlowContext>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdTokenClaims {
+    iss: String,
+    sub: String,
+    aud: serde_json::Value,
+    nonce: String,
+    azp: Option<String>,
+    #[allow(dead_code)] // The JWT validator checks expiration from the signed payload.
+    exp: usize,
+    iat: usize,
+}
+
+impl webgates::gate::oauth2::TokenExchanger for OidcTokenExchanger {
+    fn exchange_code(
+        &self, request: webgates::gate::oauth2::TokenRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        oauth2::StandardTokenResponse<
+                            oauth2::EmptyExtraTokenFields,
+                            oauth2::basic::BasicTokenType,
+                        >,
+                        webgates::gate::oauth2::errors::OAuth2Error,
+                    >,
+                > + Send,
+        >,
+    > {
+        let http = self.http.clone();
+        let flow = Arc::clone(&self.flow);
+        Box::pin(async move {
+            use oauth2::{
+                AuthUrl, AuthorizationCode, ClientId, ClientSecret, PkceCodeVerifier, RedirectUrl,
+                TokenUrl, basic::BasicClient,
+            };
+            let nonce = flow
+                .nonce_by_verifier
+                .lock()
+                .ok()
+                .and_then(|mut nonces| nonces.remove(&request.pkce_verifier))
+                .ok_or_else(|| {
+                    webgates::gate::oauth2::errors::OAuth2Error::token_exchange(
+                        "OIDC login nonce was missing",
+                    )
+                })?;
+            let token_url = TokenUrl::new(request.token_url.clone()).map_err(|error| {
+                webgates::gate::oauth2::errors::OAuth2Error::invalid_url(
+                    "token_url",
+                    error.to_string(),
+                )
+            })?;
+            let auth_url = AuthUrl::new(request.token_url.clone()).map_err(|error| {
+                webgates::gate::oauth2::errors::OAuth2Error::invalid_url(
+                    "auth_url",
+                    error.to_string(),
+                )
+            })?;
+            let mut client = BasicClient::new(ClientId::new(request.client_id.clone()))
+                .set_auth_uri(auth_url)
+                .set_token_uri(token_url);
+            if let Some(secret) = request.client_secret.as_ref() {
+                client = client.set_client_secret(ClientSecret::new(secret.clone()));
+            }
+            let redirect_url = RedirectUrl::new(request.redirect_url.clone()).map_err(|error| {
+                webgates::gate::oauth2::errors::OAuth2Error::invalid_url(
+                    "redirect_url",
+                    error.to_string(),
+                )
+            })?;
+            client = client.set_redirect_uri(redirect_url);
+            let code = AuthorizationCode::new(request.code);
+            let verifier = PkceCodeVerifier::new(request.pkce_verifier);
+            client
+                .exchange_code(code)
+                .set_pkce_verifier(verifier)
+                .request_async(&|request: oauth2::HttpRequest| {
+                    let http = http.clone();
+                    let flow = Arc::clone(&flow);
+                    let nonce = nonce.clone();
+                    async move {
+                        let response = http
+                            .request(request.method().clone(), request.uri().to_string())
+                            .headers(request.headers().clone())
+                            .body(request.body().clone())
+                            .send()
+                            .await?;
+                        let status = response.status();
+                        let headers = response.headers().clone();
+                        let body = response.bytes().await?.to_vec();
+                        if status.is_success()
+                            && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body)
+                            && let (Some(access_token), Some(id_token)) = (
+                                payload.get("access_token").and_then(serde_json::Value::as_str),
+                                payload.get("id_token").and_then(serde_json::Value::as_str),
+                            )
+                            && let Ok(mut tokens) = flow.id_token_by_access_token.lock()
+                        {
+                            tokens.insert(access_token.to_owned(), (id_token.to_owned(), nonce));
+                        }
+                        let mut token_response = oauth2::HttpResponse::new(body);
+                        *token_response.status_mut() = status;
+                        *token_response.headers_mut() = headers;
+                        Ok::<oauth2::HttpResponse, reqwest::Error>(token_response)
+                    }
+                })
+                .await
+                .map_err(|error| {
+                    webgates::gate::oauth2::errors::OAuth2Error::token_exchange(error.to_string())
+                })
+        })
+    }
+}
+
+async fn oidc_cookie_middleware(
+    State(state): State<OidcCookieMiddlewareState>, request: Request<axum::body::Body>, next: Next,
+) -> Response {
+    let path = request.uri().path().to_owned();
+    if path.ends_with("/login") {
+        let nonce = random_url_token();
+        let mut response = next.run(request).await;
+        if let Some(location) =
+            response.headers().get(header::LOCATION).and_then(|value| value.to_str().ok())
+        {
+            if let Ok(mut authorization_url) = url::Url::parse(location) {
+                authorization_url.query_pairs_mut().append_pair("nonce", &nonce);
+                if let Ok(location) = HeaderValue::from_str(authorization_url.as_str()) {
+                    response.headers_mut().insert(header::LOCATION, location);
+                    append_cookie(
+                        &mut response,
+                        &format!(
+                            "ferrisflow_oidc_nonce={nonce}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300{}",
+                            if state.secure { "; Secure" } else { "" }
+                        ),
+                    );
+                }
+            }
+        }
+        return response;
+    }
+    if path.ends_with("/callback") {
+        let verifier = request_cookie(&request, "ferrisflow_oidc_pkce");
+        let nonce = request_cookie(&request, "ferrisflow_oidc_nonce");
+        if let (Some(verifier), Some(nonce)) = (&verifier, &nonce)
+            && let Ok(mut nonces) = state.flow.nonce_by_verifier.lock()
+        {
+            nonces.insert(verifier.clone(), nonce.clone());
+        }
+        let mut response = next.run(request).await;
+        append_cookie(
+            &mut response,
+            &format!(
+                "ferrisflow_oidc_nonce=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+                if state.secure { "; Secure" } else { "" }
+            ),
+        );
+        if let Some(verifier) = verifier
+            && let Ok(mut nonces) = state.flow.nonce_by_verifier.lock()
+        {
+            nonces.remove(&verifier);
+        }
+        return response;
+    }
+    next.run(request).await
+}
+
+async fn validate_oidc_id_token(
+    http: &reqwest::Client, jwks_url: &str, issuer: &str, client_id: &str, expected_nonce: &str,
+    id_token: &str,
+) -> Result<IdTokenClaims, String> {
+    let response = http
+        .get(jwks_url)
+        .send()
+        .await
+        .map_err(|error| format!("could not fetch OIDC signing keys: {error}"))?;
+    if !response.status().is_success() {
+        return Err("OIDC signing-key endpoint returned an error".to_owned());
+    }
+    let jwks: jsonwebtoken::jwk::JwkSet = response
+        .json()
+        .await
+        .map_err(|error| format!("OIDC signing-key response was invalid: {error}"))?;
+    let header = jsonwebtoken::decode_header(id_token)
+        .map_err(|error| format!("OIDC ID-token header was invalid: {error}"))?;
+    let kid = header.kid.as_deref().ok_or("OIDC ID token has no key identifier")?;
+    let key = jwks.find(kid).ok_or("OIDC ID-token signing key was not found")?;
+    if key
+        .common
+        .public_key_use
+        .as_ref()
+        .is_some_and(|key_use| key_use != &jsonwebtoken::jwk::PublicKeyUse::Signature)
+        || key.common.key_operations.as_ref().is_some_and(|operations| {
+            !operations.contains(&jsonwebtoken::jwk::KeyOperations::Verify)
+        })
+        || key.common.key_algorithm.is_some_and(|algorithm| algorithm != header.alg.into())
+    {
+        return Err("OIDC ID-token JWKS key is not valid for this signature".to_owned());
+    }
+    let mut validation = Validation::new(header.alg);
+    validation.algorithms = vec![
+        jsonwebtoken::Algorithm::RS256,
+        jsonwebtoken::Algorithm::RS384,
+        jsonwebtoken::Algorithm::RS512,
+        jsonwebtoken::Algorithm::ES256,
+        jsonwebtoken::Algorithm::ES384,
+    ];
+    validation.set_issuer(&[issuer]);
+    validation.set_audience(&[client_id]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "iat"]);
+    let claims = decode::<IdTokenClaims>(
+        id_token,
+        &DecodingKey::from_jwk(key)
+            .map_err(|error| format!("OIDC signing key was invalid: {error}"))?,
+        &validation,
+    )
+    .map_err(|error| format!("OIDC ID-token validation failed: {error}"))?
+    .claims;
+    if claims.iss != issuer || claims.nonce != expected_nonce || claims.sub.is_empty() {
+        return Err("OIDC ID-token issuer, nonce, or subject did not match".to_owned());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
+        .as_secs();
+    if claims.iat as u64 > now.saturating_add(300) {
+        return Err("OIDC ID-token issue time is in the future".to_owned());
+    }
+    let audiences = match &claims.aud {
+        serde_json::Value::String(audience) => vec![audience.as_str()],
+        serde_json::Value::Array(audiences) => audiences
+            .iter()
+            .map(serde_json::Value::as_str)
+            .collect::<Option<Vec<_>>>()
+            .ok_or("OIDC ID-token audience was invalid")?,
+        _ => return Err("OIDC ID-token audience was invalid".to_owned()),
+    };
+    if !audiences.contains(&client_id)
+        || audiences.iter().any(|audience| *audience != client_id)
+            && claims.azp.as_deref() != Some(client_id)
+    {
+        return Err("OIDC ID-token audience was not valid for this client".to_owned());
+    }
+    if claims.azp.as_deref().is_some_and(|authorized_party| authorized_party != client_id) {
+        return Err("OIDC ID-token authorized party did not match this client".to_owned());
+    }
+    Ok(claims)
+}
+
+fn random_url_token() -> String {
+    URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>())
+}
+
+fn request_cookie(request: &Request<axum::body::Body>, name: &str) -> Option<String> {
+    request
+        .headers()
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix(name)?.strip_prefix('=').map(str::to_owned))
+}
+
+fn append_cookie(response: &mut Response, cookie: &str) {
+    if let Ok(value) = HeaderValue::from_str(cookie) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+}
+
 pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
     if !oidc_enabled() {
         return Ok(None);
@@ -173,6 +467,9 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
     let token_url = value("OIDC_TOKEN_URL").unwrap_or_else(|| {
         format!("{}/protocol/openid-connect/token", issuer.trim_end_matches('/'))
     });
+    let jwks_url = value("OIDC_JWKS_URL").unwrap_or_else(|| {
+        format!("{}/protocol/openid-connect/jwks.json", issuer.trim_end_matches('/'))
+    });
     let introspection_url =
         value("OAUTH_INTROSPECTION_URL").ok_or("OIDC_ENABLED requires OAUTH_INTROSPECTION_URL")?;
     let introspection_id = value("OAUTH_CLIENT_ID").unwrap_or_else(|| client_id.clone());
@@ -182,6 +479,7 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
         ("OIDC_ISSUER", issuer.as_str()),
         ("OIDC_AUTH_URL", auth_url.as_str()),
         ("OIDC_TOKEN_URL", token_url.as_str()),
+        ("OIDC_JWKS_URL", jwks_url.as_str()),
         ("OIDC_REDIRECT_URI", redirect_url.as_str()),
         ("OAUTH_INTROSPECTION_URL", introspection_url.as_str()),
     ] {
@@ -233,6 +531,12 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("could not create OAuth introspection client: {error}"))?;
+    let flow = Arc::new(OidcFlowContext::default());
+    let id_token_http = http.clone();
+    let id_token_flow = Arc::clone(&flow);
+    let validator_issuer = issuer.clone();
+    let validator_client_id = client_id.clone();
+    let validator_jwks_url = jwks_url.clone();
     let mapper_read_scope = read_scope.clone();
     let mapper_write_scope = write_scope.clone();
     let mapper_admin_scope = admin_scope.clone();
@@ -253,6 +557,7 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
     .with_cookie_template(cookie_template(OIDC_SESSION_COOKIE, ttl_secs))
     .with_post_login_redirect("/")
     .with_jwt_codec(&issuer, Arc::clone(&codec), ttl_secs)
+    .with_token_exchanger(OidcTokenExchanger { http: http.clone(), flow: Arc::clone(&flow) })
     .with_account_mapper(move |token_response| {
         let http = http.clone();
         let introspection_url = introspection_url.clone();
@@ -261,12 +566,38 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
         let read_scope = mapper_read_scope.clone();
         let write_scope = mapper_write_scope.clone();
         let admin_scope = mapper_admin_scope.clone();
+        let id_token_http = id_token_http.clone();
+        let id_token_flow = Arc::clone(&id_token_flow);
+        let issuer = validator_issuer.clone();
+        let client_id = validator_client_id.clone();
+        let jwks_url = validator_jwks_url.clone();
         Box::pin(async move {
             use oauth2::TokenResponse;
+            let access_token = token_response.access_token().secret();
+            let (id_token, expected_nonce) = id_token_flow
+                .id_token_by_access_token
+                .lock()
+                .ok()
+                .and_then(|mut tokens| tokens.remove(access_token))
+                .ok_or_else(|| {
+                    webgates::gate::oauth2::errors::OAuth2Error::token_exchange(
+                        "OIDC token response did not include a usable ID token",
+                    )
+                })?;
+            let id_claims = validate_oidc_id_token(
+                &id_token_http,
+                &jwks_url,
+                &issuer,
+                &client_id,
+                &expected_nonce,
+                &id_token,
+            )
+            .await
+            .map_err(webgates::gate::oauth2::errors::OAuth2Error::token_exchange)?;
             let response = http
                 .post(introspection_url)
                 .basic_auth(introspection_id, Some(introspection_secret))
-                .form(&[("token", token_response.access_token().secret())])
+                .form(&[("token", access_token)])
                 .send()
                 .await
                 .map_err(|error| {
@@ -286,6 +617,11 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
                     "provider returned an inactive access token",
                 )
             })?;
+            if subject != id_claims.sub {
+                return Err(webgates::gate::oauth2::errors::OAuth2Error::token_exchange(
+                    "ID token subject did not match the introspected access token",
+                ));
+            }
             let scopes = introspection
                 .scope
                 .unwrap_or_default()
@@ -310,9 +646,12 @@ pub(crate) fn oidc_router() -> Result<Option<OidcRouter>, String> {
             Ok(account)
         })
     });
+    let cookie_middleware_state =
+        OidcCookieMiddlewareState { flow: Arc::clone(&flow), secure: secure_cookies };
     let router = gate
         .into_router("/auth/oidc")
-        .map_err(|error| format!("invalid WebGates OIDC configuration: {error}"))?;
+        .map_err(|error| format!("invalid WebGates OIDC configuration: {error}"))?
+        .layer(from_fn_with_state(cookie_middleware_state, oidc_cookie_middleware));
     Ok(Some(OidcRouter { router, codec, issuer }))
 }
 
