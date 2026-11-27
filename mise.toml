@@ -8,6 +8,7 @@ rust = "latest"
 "cargo:cargo-nextest" = "latest"
 "github:convco/convco" = "latest"
 "cargo:dioxus-cli" = "latest"
+prek = "latest"
 
 helm = "latest"
 node = "latest"
