@@ -270,6 +270,12 @@ packages are stored as declarative bundles; their content types, workflows,
 and views remain available in the package manifest for inspection and
 composition.
 
+### Duplicate workflows
+
+Use the copy button beside a workflow in the workflow list to create a
+`Copy of …` workflow from its definition. The copy starts inactive, so any
+scheduled or database triggers must be reviewed before enabling it.
+
 ### Expose a workflow as a REST endpoint
 
 Open the workflow's **REST API settings**, enable **Expose via REST API**, and
