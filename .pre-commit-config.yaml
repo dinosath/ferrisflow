@@ -5,7 +5,7 @@ repos:
     hooks:
       - id: conventional-commit
         name: Check commit message with convco
-        entry: sh scripts/check-conventional-commit.sh
+        entry: sh -c 'convco check --from-stdin < "$1"' convco-message
         language: system
         stages: [commit-msg]
         always_run: true

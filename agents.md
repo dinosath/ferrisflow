@@ -9,6 +9,7 @@ This repository contains Ferrisflow, a Rust and Dioxus workflow application.
 - Use `feat`, `fix`, `perf`, `refactor`, or `revert` for changes that should trigger release-plz.
 - Use the Git identity for the agent doing the work when creating commits: Codex commits as Codex, Claude as Claude, and so on. Do not use the repository owner's identity for agent-authored commits.
 - The commit-msg hook checks the message with the Rust-based `convco` CLI. Install the tools with `mise install`, then install the repository hooks with `pre-commit install`.
+- Do not create Bash scripts. Use existing tools or inline commands instead.
 
 ## Sidebar conventions
 
