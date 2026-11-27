@@ -21,10 +21,51 @@ pub(crate) fn WorkflowList() -> Element {
     let mut query = use_signal(String::new);
     let mut import_open = use_signal(|| false);
     let mut import_error = use_signal(|| None::<String>);
+    let mut duplicate_error = use_signal(|| None::<String>);
     let mut run_workflow_id = use_signal(|| None::<i32>);
     let mut settings_workflow_id = use_signal(|| None::<i32>);
     let mut settings_error = use_signal(|| None::<String>);
     let navigator = use_navigator();
+    let mut on_duplicate = move |workflow: Workflow| {
+        duplicate_error.set(None);
+        spawn(async move {
+            let result = async {
+                let name = format!("Copy of {}", workflow.name);
+                let mut definition: serde_json::Value =
+                    serde_json::from_str(&workflow.definition_json)
+                        .map_err(|error| error.to_string())?;
+                if let Some(document) =
+                    definition.get_mut("document").and_then(serde_json::Value::as_object_mut)
+                {
+                    document.insert("name".into(), serde_json::Value::String(name.clone()));
+                }
+                let definition_json =
+                    serde_json::to_string_pretty(&definition).map_err(|error| error.to_string())?;
+                let errors = validate_workflow(definition_json.clone()).await?;
+                if !errors.is_empty() {
+                    return Err(errors.join("; "));
+                }
+                save_workflow(
+                    WorkflowPayload {
+                        active: false,
+                        definition_json,
+                        description: workflow.description,
+                        name,
+                        version: workflow.version,
+                    },
+                    None,
+                )
+                .await
+            }
+            .await;
+            match result {
+                Ok(saved) => {
+                    navigator.push(Route::EditWorkflow { id: saved.id });
+                }
+                Err(message) => duplicate_error.set(Some(message)),
+            }
+        });
+    };
     let on_import = move |workflow: Result<ImportedWorkflow, String>| {
         import_open.set(false);
         import_error.set(None);
@@ -70,6 +111,7 @@ pub(crate) fn WorkflowList() -> Element {
             actions: rsx! { Link { class: "button button-primary", to: Route::NewWorkflow {}, "+ New workflow" } },
             section { class: "workflows-list",
                 if let Some(message) = import_error() { ErrorPanel { message } }
+                if let Some(message) = duplicate_error() { ErrorPanel { message } }
                 match workflows() {
                     Some(Ok(items)) => {
                         let all_workflows = items.clone();
@@ -131,6 +173,14 @@ pub(crate) fn WorkflowList() -> Element {
                                                 aria_label: "REST API settings for {workflow.name}",
                                                 onclick: move |_| { settings_error.set(None); settings_workflow_id.set(Some(workflow.id)); },
                                                 Icon { name: "settings" }
+                                            }
+                                            button {
+                                                class: "workflow-row-run",
+                                                r#type: "button",
+                                                title: "Duplicate {workflow.name}",
+                                                aria_label: "Duplicate {workflow.name}",
+                                                onclick: { let workflow = workflow.clone(); move |_| on_duplicate(workflow.clone()) },
+                                                Icon { name: "copy" }
                                             }
                                             a {
                                                 class: "workflow-row-export",
