@@ -6,12 +6,19 @@ rust = "latest"
 "cargo:cargo-chef" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
+"github:convco/convco" = "latest"
 "cargo:dioxus-cli" = "latest"
+prek = "latest"
 
 helm = "latest"
 node = "latest"
 pnpm = "latest"
 jq = "latest"
+
+[tasks.prek]
+description = "Run prek for Git hook setup and checks"
+raw_args = true
+run = "prek"
 
 [tasks.generate-local]
 description = "Generate the project files from local repo"
