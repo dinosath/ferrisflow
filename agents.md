@@ -2,6 +2,13 @@
 
 This repository contains Ferrisflow, a Rust and Dioxus workflow application.
 
+## Commit messages
+
+- Write every commit subject in Conventional Commits format: `<type>[optional scope][!]: <description>`.
+- Use a lowercase type such as `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, or `chore`, followed by a concise description.
+- Use `feat`, `fix`, `perf`, `refactor`, or `revert` for changes that should trigger release-plz.
+- The commit-msg hook checks this format. Install the repository hooks with `pre-commit install`.
+
 ## Sidebar conventions
 
 - Build sidebar sections with the shared `SidebarSection` component in `src/pages/shared.rs`.
