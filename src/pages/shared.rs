@@ -359,8 +359,11 @@ pub(crate) fn Shell(
                                         role: "menuitem",
                                         onclick: move |_| {
                                             crate::api_http::clear_basic_auth();
-                                            current_user.set(None);
                                             user_menu.set(false);
+                                            spawn(async move {
+                                                super::api::sign_out_oidc().await;
+                                                current_user.set(None);
+                                            });
                                         },
                                         "Sign out"
                                     }

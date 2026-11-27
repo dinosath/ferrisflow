@@ -9,6 +9,13 @@ pub(crate) fn LoginPage() -> Element {
     let mut password = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut signing_in = use_signal(|| false);
+    let mut oidc_enabled = use_signal(|| false);
+
+    use_effect(move || {
+        spawn(async move {
+            oidc_enabled.set(api::oidc_enabled().await);
+        });
+    });
 
     let submit = move |event: FormEvent| {
         event.prevent_default();
@@ -31,6 +38,10 @@ pub(crate) fn LoginPage() -> Element {
                 div { class: "login-brand", span { class: "login-brand__mark", "F" } span { "Ferrisflow" } }
                 h1 { "Sign in to your workspace" }
                 p { class: "login-intro", "Enter your Ferrisflow username and password to continue." }
+                if oidc_enabled() {
+                    a { class: "button button-primary login-submit", href: "/auth/oidc/login", "Continue with single sign-on" }
+                    p { class: "login-footnote", "Sign in with your organization's identity provider." }
+                }
                 if let Some(message) = error() {
                     div { class: "login-error", role: "alert", "{message}" }
                 }

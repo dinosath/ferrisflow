@@ -126,6 +126,64 @@ and DELETE require `ferrisflow:write`. Set `OAUTH_READ_SCOPE` or
 `AUTH_REQUIRED=false` only for trusted local development or isolated tests;
 user administration remains admin-only in every mode.
 
+### OIDC browser sign-in
+
+Set `OIDC_ENABLED=true` to show the single sign-on button and enable the
+authorization-code callback. Ferrisflow uses the WebGates Axum OAuth2 gate for
+authorization code, PKCE, state cookies, and signed session cookies. It requests
+the `openid`, `profile`, and `email` scopes. Ferrisflow validates the returned ID
+token's signature, issuer, audience, expiry, and per-login nonce against the
+provider's JWKS, then introspects the access token and requires its subject to
+match before mapping Ferrisflow scopes into a local session. Set
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the exact callback URI in
+`OIDC_REDIRECT_URI` (default `http://localhost:8080/auth/oidc/callback`). The
+authorization and token endpoints default to the standard
+`{OIDC_ISSUER}/protocol/openid-connect/{auth,token}` paths; set `OIDC_AUTH_URL`
+and `OIDC_TOKEN_URL` for providers that use different paths. The signing-key
+endpoint defaults to `{OIDC_ISSUER}/protocol/openid-connect/jwks.json`; set
+`OIDC_JWKS_URL` for providers that use a different JWKS path. API requests verify
+the signed local session cookie without contacting the identity provider.
+`OIDC_ENABLED` defaults to false. The existing password login remains available.
+
+WebGates requires a Ferrisflow session signing key pair when OIDC is enabled.
+Generate one for local development and keep both files private:
+
+```sh
+openssl ecparam -name secp384r1 -genkey -noout -out oidc-session-private.pem
+openssl pkey -in oidc-session-private.pem -pubout -out oidc-session-public.pem
+```
+
+The generated key files are ignored by Git. Use persistent keys in deployments
+so sessions remain verifiable across restarts and app instances.
+
+For a local FerrisKey provider, copy `.env.example` to `.env`, set the client
+secret after creating a client, then start FerrisKey and its PostgreSQL database:
+
+```sh
+docker compose --profile oidc up -d postgres ferriskey-postgres ferriskey-migrate ferriskey ferriskey-webapp
+```
+
+Podman users can run the same profile with `podman compose`. Open
+`http://localhost:5555` (admin/admin), create a `ferrisflow` realm, and create
+an enabled confidential OpenID Connect client with PKCE required and redirect
+URI `http://localhost:8080/auth/oidc/callback`. Assign the `openid`, `profile`,
+and `email` scopes, and create the Ferrisflow API scopes used by this service
+(`ferrisflow:read`, `ferrisflow:write`, and `ferrisflow:admin`) if the API is to
+enforce those permissions. Copy the client secret into both OIDC and OAuth
+client-secret variables in `.env` and set `OIDC_ENABLED=true`. Run the
+Ferrisflow web app on the host with the `.env` values exported:
+
+```sh
+set -a
+. ./.env
+set +a
+dx serve --fullstack --features fullstack
+```
+
+The provider issuer is `http://localhost:3333/realms/ferrisflow`; its introspection URL is
+`http://localhost:3333/realms/ferrisflow/protocol/openid-connect/token/introspect`.
+The default compose profile is unchanged and does not start FerrisKey.
+
 ### User administration
 
 The service includes admin-only user CRUD endpoints: `GET` and `POST

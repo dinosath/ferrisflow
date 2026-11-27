@@ -89,6 +89,26 @@ pub(crate) async fn current_principal() -> Result<AuthPrincipal, String> {
     decode_response(response).await
 }
 
+#[derive(Deserialize)]
+struct AuthConfigResponse {
+    oidc_enabled: bool,
+}
+
+pub(crate) async fn oidc_enabled() -> bool {
+    match reqwest::get(api_url("/api/auth/config")).await {
+        Ok(response) => response
+            .json::<AuthConfigResponse>()
+            .await
+            .ok()
+            .is_some_and(|config| config.oidc_enabled),
+        Err(_) => false,
+    }
+}
+
+pub(crate) async fn sign_out_oidc() {
+    let _ = reqwest::get(api_url("/auth/oidc/logout")).await;
+}
+
 pub(crate) async fn authenticate(
     username: String, password: String,
 ) -> Result<AuthPrincipal, String> {

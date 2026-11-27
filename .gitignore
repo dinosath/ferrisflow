@@ -13,6 +13,8 @@ target/
 # Contains mutation testing data
 **/mutants.out*/
 .env
+oidc-session-private.pem
+oidc-session-public.pem
 generated/**
 **/.DS_Store
 
