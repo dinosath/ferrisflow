@@ -5,7 +5,7 @@ repos:
     hooks:
       - id: conventional-commit
         name: Check Conventional Commit message
-        entry: python3 scripts/check-conventional-commit.py
+        entry: cococheck --message-file
         language: system
         stages: [commit-msg]
         always_run: true
