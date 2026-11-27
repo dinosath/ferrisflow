@@ -7,7 +7,8 @@ This repository contains Ferrisflow, a Rust and Dioxus workflow application.
 - Write every commit subject in Conventional Commits format: `<type>[optional scope][!]: <description>`.
 - Use a lowercase type such as `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, or `chore`, followed by a concise description.
 - Use `feat`, `fix`, `perf`, `refactor`, or `revert` for changes that should trigger release-plz.
-- The commit-msg hook checks this format with the Rust-based CoCoCheck CLI. Install the tools with `mise install`, then install the repository hooks with `pre-commit install`.
+- Use the Git identity for the agent doing the work when creating commits: Codex commits as Codex, Claude as Claude, and so on. Do not use the repository owner's identity for agent-authored commits.
+- The commit-msg hook checks the message with the Rust-based CoCoCheck CLI. Install the tools with `mise install`, then install the repository hooks with `pre-commit install`.
 
 ## Sidebar conventions
 
