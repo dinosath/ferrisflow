@@ -6,7 +6,7 @@ rust = "latest"
 "cargo:cargo-chef" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
-"cargo:cococheck" = "latest"
+"github:convco/convco" = "latest"
 "cargo:dioxus-cli" = "latest"
 
 helm = "latest"
